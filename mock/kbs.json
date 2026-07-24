@@ -1,0 +1,20 @@
+{
+  "kbs": [
+    {
+      "id": "kb_demo_001",
+      "name": "机器学习基础知识库",
+      "description": "含机器学习核心概念、算法原理与面试常见问题",
+      "tags": ["ML", "面试", "基础"],
+      "doc_count": 3,
+      "created_at": "2026-07-19T10:00:00"
+    },
+    {
+      "id": "kb_demo_002",
+      "name": "Python 高级编程",
+      "description": "Python 进阶技巧、设计模式与性能优化",
+      "tags": ["Python", "进阶"],
+      "doc_count": 2,
+      "created_at": "2026-07-20T08:30:00"
+    }
+  ]
+}

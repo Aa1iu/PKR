@@ -1,0 +1,15 @@
+fastapi>=0.100.0
+uvicorn[standard]>=0.23.0
+sqlalchemy>=2.0.0
+pydantic>=2.0.0
+python-multipart>=0.0.6
+aiofiles>=23.0.0
+chromadb>=0.4.0
+FlagEmbedding>=1.2.0
+openai>=1.0.0
+PyMuPDF>=1.23.0
+python-pptx>=0.6.0
+python-docx>=1.0.0
+chardet>=5.0.0
+langchain>=0.1.0
+langchain-community>=0.1.0
