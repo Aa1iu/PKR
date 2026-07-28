@@ -13,20 +13,97 @@
 import os
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile, File, Query
 from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 
 from ..core.config import settings
-from ..core.database import get_db
+from ..core.database import get_db, SessionLocal
 from ..models import KnowledgeBase, Document, DocumentPage
 from ..schemas import (
     DocResponse, DocListResponse, DocDetailResponse,
     DocRenameRequest, DocContentResponse, DocPageResponse,
     PageImageResponse, SuccessResponse,
 )
+from ..services.chroma_service import get_chroma_service
+from ..services.document_parser import parse_document, chunk_text, estimate_page_num
+from ..services.embedding_service import get_embedding_service
 
 router = APIRouter(prefix="/api/kbs/{kb_id}/docs", tags=["文档"])
+
+
+def _process_document_background(doc_id: str, kb_id: str, file_path: str, filename: str):
+    """后台任务：解析文档 → 分块 → Embedding → ChromaDB + SQLite 双写"""
+    db = SessionLocal()
+    try:
+        doc = db.query(Document).filter(Document.id == doc_id).first()
+        if not doc:
+            return
+
+        # 1. 解析文档
+        text = parse_document(file_path)
+        chars_per_page = 800
+
+        # 2. 文本分块
+        chunks = chunk_text(text, settings.CHUNK_SIZE, settings.CHUNK_OVERLAP)
+
+        if not chunks:
+            doc.status = "error"
+            db.commit()
+            return
+
+        # 3. Embedding
+        emb_service = get_embedding_service()
+        embeddings = emb_service.embed(chunks)
+
+        # 4. ChromaDB 写入
+        metadatas = []
+        for i, chunk in enumerate(chunks):
+            metadatas.append({
+                "kb_id": kb_id,
+                "doc_id": doc_id,
+                "doc_name": filename,
+                "page_num": estimate_page_num(i, settings.CHUNK_SIZE, chars_per_page),
+                "chunk_index": i,
+            })
+
+        chroma_service = get_chroma_service()
+        chroma_service.add_chunks(
+            kb_id=kb_id,
+            chunks=chunks,
+            embeddings=embeddings,
+            metadatas=metadatas,
+        )
+
+        # 5. SQLite DocumentPage 写入
+        for i, chunk in enumerate(chunks):
+            page = DocumentPage(
+                doc_id=doc_id,
+                page_num=metadatas[i]["page_num"],
+                text=chunk,
+            )
+            db.add(page)
+
+        # 6. 更新文档状态
+        doc.status = "ready"
+        doc.total_pages = len(set(m["page_num"] for m in metadatas))
+        db.commit()
+
+    except Exception as e:
+        # 出错时标记文档状态
+        try:
+            doc = db.query(Document).filter(Document.id == doc_id).first()
+            if doc:
+                doc.status = "error"
+                db.commit()
+        except Exception:
+            pass
+        # 将错误信息写入文件日志便于调试
+        import traceback
+        print(f"[ERROR] 文档 {doc_id} 处理后失败: {e}")
+        traceback.print_exc()
+    finally:
+        db.close()
 
 
 def _doc_to_response(doc: Document) -> DocResponse:
@@ -60,6 +137,7 @@ def _doc_to_detail(doc: Document) -> DocDetailResponse:
 @router.post("/upload", response_model=DocResponse, status_code=201)
 async def upload_doc(
     kb_id: str,
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
 ):
@@ -98,7 +176,15 @@ async def upload_doc(
     db.commit()
     db.refresh(doc)
 
-    # TODO: Phase 1 — 触发异步：文档解析 + 分块 + embedding 入库
+    # 触发后台处理：解析 → 分块 → Embedding → ChromaDB + SQLite
+    background_tasks.add_task(
+        _process_document_background,
+        doc_id=doc.id,
+        kb_id=kb_id,
+        file_path=saved_path,
+        filename=filename,
+    )
+
     return _doc_to_response(doc)
 
 
@@ -152,11 +238,14 @@ def delete_doc(kb_id: str, doc_id: str, db: Session = Depends(get_db)):
     if not doc:
         raise HTTPException(status_code=404, detail="文档不存在")
 
+    # ChromaDB 向量同步删除
+    chroma_service = get_chroma_service()
+    chroma_service.delete_by_doc_id(kb_id, doc_id)
+
     # 删除物理文件
     if os.path.exists(doc.file_path):
         os.remove(doc.file_path)
 
-    # TODO: Phase 2 — ChromaDB 向量同步删除
     db.delete(doc)
     db.commit()
     return SuccessResponse(success=True)

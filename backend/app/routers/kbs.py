@@ -14,11 +14,12 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from ..core.database import get_db
-from ..models import KnowledgeBase, Document
+from ..models import KnowledgeBase, Document, DocumentPage
+from ..services.chroma_service import get_chroma_service
 from ..schemas import (
     KBCreate, KBUpdate, KBResponse, KBListResponse,
-    KBExportResponse, FullTextSearchResponse, ReindexResponse,
-    SuccessResponse, tags_to_list, tags_to_str,
+    KBExportResponse, FullTextSearchResponse, FullTextSearchResult,
+    ReindexResponse, SuccessResponse, tags_to_list, tags_to_str,
 )
 
 router = APIRouter(prefix="/api/kbs", tags=["知识库"])
@@ -86,10 +87,12 @@ def update_kb(kb_id: str, body: KBUpdate, db: Session = Depends(get_db)):
 
 @router.delete("/{kb_id}", response_model=SuccessResponse)
 def delete_kb(kb_id: str, db: Session = Depends(get_db)):
-    """删除知识库（级联删除文档、概念、关系、对话历史）"""
+    """删除知识库（级联删除文档、概念、关系、对话历史 + ChromaDB 向量）"""
     kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id).first()
     if not kb:
         raise HTTPException(status_code=404, detail="知识库不存在")
+    # ChromaDB 向量同步清理
+    get_chroma_service().delete_by_kb_id(kb_id)
     db.delete(kb)
     db.commit()
     return SuccessResponse(success=True)
@@ -122,12 +125,48 @@ def search_kb(
     page_size: int = 20,
     db: Session = Depends(get_db),
 ):
-    """知识库内全文搜索（Phase 1 完整实现）"""
+    """知识库内全文搜索 — Phase 1 完整实现
+
+    在 DocumentPage.text 中执行 SQL LIKE 匹配，返回匹配段落及来源文档信息。
+    """
     kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id).first()
     if not kb:
         raise HTTPException(status_code=404, detail="知识库不存在")
-    # TODO: Phase 1 — SQL LIKE 分页全文搜索 DocumentPage.text
-    return FullTextSearchResponse(results=[])
+
+    q = q.strip() if q else ""
+    if not q:
+        return FullTextSearchResponse(results=[])
+    page_size = min(page_size, 100)
+
+    # 关联查询：DocumentPage JOIN Document，限定 kb_id + LIKE 匹配
+    search_term = f"%{q}%"
+    rows = (
+        db.query(DocumentPage, Document.filename)
+        .join(Document, DocumentPage.doc_id == Document.id)
+        .filter(Document.kb_id == kb_id, DocumentPage.text.like(search_term))
+        .order_by(DocumentPage.page_num)
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+
+    results = []
+    for doc_page, doc_name in rows:
+        # 截取匹配位置周围的文本作为 snippet（最多 200 字符）
+        text = doc_page.text or ""
+        idx = text.lower().find(q.lower())
+        start = max(0, idx - 50) if idx >= 0 else 0
+        end = min(len(text), start + 200)
+        snippet = ("..." if start > 0 else "") + text[start:end] + ("..." if end < len(text) else "")
+
+        results.append(FullTextSearchResult(
+            doc_id=doc_page.doc_id,
+            doc_name=doc_name,
+            page_num=doc_page.page_num,
+            snippet=snippet,
+        ))
+
+    return FullTextSearchResponse(results=results)
 
 
 # ===== Phase 2 =====
