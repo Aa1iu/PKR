@@ -14,94 +14,216 @@ SSE 事件格式（Phase 2 完整实现）：
 """
 
 import json
-from typing import AsyncGenerator
+from datetime import datetime, timezone
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from ..core.database import get_db
-from ..models import KnowledgeBase
-from ..schemas import ChatRequest, ChatHistoryResponse, SuccessResponse
+from ..models import KnowledgeBase, Document
+from ..schemas import (
+    ChatRequest, ChatHistoryResponse, ChatMessageResponse,
+    ChatSource, SuccessResponse,
+)
 from ..services.llm_service import get_llm_service
+from ..services.rag_service import get_rag_service
 
 router = APIRouter(tags=["对话"])
 
 
-# ===================== SSE 工具函数 =====================
+# ==================== 内存对话历史 ====================
 
-async def _generate_sse(messages: AsyncGenerator[str, None]) -> AsyncGenerator[str, None]:
-    """将 LLM 输出封装为 SSE text/event-stream（契约格式）"""
-    async for chunk in messages:
-        yield f"data: {json.dumps({'type': 'token', 'content': chunk})}\n\n"
-    yield f"data: {json.dumps({'type': 'done', 'content': '', 'message_id': '', 'follow_up_questions': []})}\n\n"
+# {kb_id: [{id, role, content, sources, follow_up_questions, created_at}]}
+_chat_store: dict[str, list[dict]] = {}
+_MAX_HISTORY = 40  # 每个 KB 最多保留 40 条消息（20 轮）
 
 
-# ===================== POST /api/chat =====================
+def _get_history(kb_id: str | None) -> list[dict]:
+    key = kb_id or "__global__"
+    if key not in _chat_store:
+        _chat_store[key] = []
+    return _chat_store[key]
+
+
+def _add_message(kb_id: str | None, role: str, content: str,
+                 sources: list[dict] | None = None,
+                 follow_ups: list[str] | None = None) -> str:
+    msg_id = get_llm_service().gen_message_id()
+    history = _get_history(kb_id)
+    msg = {
+        "id": msg_id,
+        "role": role,
+        "content": content,
+        "sources": sources or [],
+        "follow_up_questions": follow_ups or [],
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    history.append(msg)
+    # 保持上限
+    if len(history) > _MAX_HISTORY:
+        _chat_store[kb_id or "__global__"] = history[-_MAX_HISTORY:]
+    return msg_id
+
+
+# ==================== SSE 工具函数 ====================
+
+def _sse_event(event_type: str, **kwargs) -> str:
+    """构造一条 SSE data 行"""
+    payload = {"type": event_type, **kwargs}
+    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
+# ==================== POST /api/chat ====================
 
 @router.post("/api/chat")
 async def chat(body: ChatRequest, db: Session = Depends(get_db)):
-    """AI 对话（SSE 流式）— Phase 2 完整实现
+    """AI 对话（SSE 流式）— Phase 2 RAG 增强
 
-    通过 context_type 区分三种场景：
-    - doc:    基于指定文档上下文回答
-    - kb:     基于指定知识库上下文回答
-    - global: 全局对话，不限定知识库
+    context_type 三种场景：
+    - kb:     基于知识库 RAG 检索回答
+    - doc:    基于指定文档 RAG 检索回答
+    - global: 全局对话，不检索
     """
     kb = None
-    context = ""
+    doc = None
+    kb_name = ""
+    doc_name = ""
+    doc_page = body.page or 0
 
+    # —— 校验 & 查 KB/Doc ——
     if body.context_type in ("doc", "kb"):
         if not body.kb_id:
             raise HTTPException(status_code=422, detail="doc/kb 场景必须提供 kb_id")
-        kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == body.kb_id).first()
+        kb = db.query(KnowledgeBase).filter(
+            KnowledgeBase.id == body.kb_id
+        ).first()
         if not kb:
             raise HTTPException(status_code=404, detail="知识库不存在")
-        context = f"用户正在知识库「{kb.name}」中提问。"
+        kb_name = kb.name
+
         if body.context_type == "doc" and body.doc_id:
-            context += f" 当前查看的文档ID: {body.doc_id}，页码: {body.page or '未知'}。"
-    elif body.context_type == "global":
-        context = "用户正在进行全局知识问答。可以综合所有知识和常识回答。"
+            doc = db.query(Document).filter(
+                Document.id == body.doc_id,
+                Document.kb_id == body.kb_id,
+            ).first()
+            if doc:
+                doc_name = doc.filename
 
-    # TODO: Phase 2 — 集成 RAG 检索上下文（ChromaDB 向量检索 → 拼入 Prompt）
+    # —— RAG 检索 ——
+    rag_service = get_rag_service()
+    llm_service = get_llm_service()
+    sources: list[dict] = []
+    source_objs: list[ChatSource] = []
 
-    llm = get_llm_service()
+    if body.kb_id and body.context_type != "global":
+        sources = rag_service.search_chunks(
+            kb_id=body.kb_id,
+            query=body.question,
+            top_k=5,
+            doc_id=body.doc_id if body.context_type == "doc" else None,
+        )
+        source_objs = [
+            ChatSource(
+                doc_name=s["doc_name"],
+                doc_id=s["doc_id"],
+                page=s["page_num"],
+                chunk_text=s["chunk_text"],
+                score=s["score"],
+            )
+            for s in sources
+        ]
 
+    # —— 记录用户消息 ——
+    _add_message(body.kb_id, "user", body.question)
+
+    # —— SSE 流式 ——
     async def stream():
-        async for chunk in llm.chat_stream(body.question, context):
-            yield chunk
+        try:
+            # 1. 先发送 source 事件（检索来源）
+            if source_objs:
+                yield _sse_event("source",
+                    sources=[s.model_dump() for s in source_objs])
+
+            # 2. 流式输出 LLM token
+            answer_parts = []
+            async for chunk in llm_service.chat_stream_rag(
+                question=body.question,
+                sources=sources,
+                scenario=body.context_type,  # type: ignore
+                kb_name=kb_name,
+                doc_name=doc_name,
+                doc_page=doc_page,
+                chat_history=_get_history(body.kb_id),
+            ):
+                answer_parts.append(chunk)
+                yield _sse_event("token", content=chunk)
+
+            # 3. 记录 assistant 消息
+            full_answer = "".join(answer_parts)
+            msg_id = _add_message(
+                body.kb_id,
+                "assistant",
+                full_answer,
+                sources=[s.model_dump() for s in source_objs] if source_objs else [],
+            )
+
+            # 4. done 事件
+            yield _sse_event("done", message_id=msg_id,
+                             follow_up_questions=[])
+
+        except Exception as e:
+            yield _sse_event("error", content=str(e))
 
     return StreamingResponse(
-        _generate_sse(stream()),
+        stream(),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
 
-# ===================== 对话历史（Phase 2 占位） =====================
+# ==================== 对话历史 ====================
+
+def _history_to_response(kb_id: str | None) -> ChatHistoryResponse:
+    history = _get_history(kb_id)
+    return ChatHistoryResponse(
+        kb_id=kb_id,
+        messages=[
+            ChatMessageResponse(
+                id=m["id"],
+                role=m["role"],  # type: ignore
+                content=m["content"],
+                sources=[ChatSource(**s) for s in m.get("sources", [])] or None,
+                follow_up_questions=m.get("follow_up_questions") or None,
+                created_at=m.get("created_at"),  # type: ignore
+            )
+            for m in history
+        ],
+    )
+
 
 @router.get("/api/kbs/{kb_id}/chat/history", response_model=ChatHistoryResponse)
 def get_kb_chat_history(kb_id: str, db: Session = Depends(get_db)):
-    """获取知识库对话历史 — Phase 2"""
+    """获取知识库对话历史"""
     kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id).first()
     if not kb:
         raise HTTPException(status_code=404, detail="知识库不存在")
-    # TODO: Phase 2 — 从 ChatMessage 表读取 kb_id 匹配的消息
-    return ChatHistoryResponse(kb_id=kb_id, messages=[])
+    return _history_to_response(kb_id)
 
 
 @router.get("/api/chat/history", response_model=ChatHistoryResponse)
-def get_global_chat_history(db: Session = Depends(get_db)):
-    """获取全局对话历史 — Phase 2"""
-    # TODO: Phase 2 — 从 ChatMessage 表读取 kb_id IS NULL 的消息
-    return ChatHistoryResponse(kb_id=None, messages=[])
+def get_global_chat_history():
+    """获取全局对话历史"""
+    return _history_to_response(None)
 
 
 @router.delete("/api/kbs/{kb_id}/chat/history", response_model=SuccessResponse)
 def clear_kb_chat_history(kb_id: str, db: Session = Depends(get_db)):
-    """清除知识库对话历史 — Phase 2"""
+    """清除知识库对话历史"""
     kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id).first()
     if not kb:
         raise HTTPException(status_code=404, detail="知识库不存在")
-    # TODO: Phase 2 — 删除 ChatMessage 表中 kb_id 匹配的记录
+    key = kb_id or "__global__"
+    _chat_store.pop(key, None)
     return SuccessResponse(success=True)
