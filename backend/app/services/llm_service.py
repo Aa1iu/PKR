@@ -149,6 +149,35 @@ class LLMService:
         except Exception as e:
             yield f"[LLM 调用失败: {e}]"
 
+    # ==================== 非流式调用（图谱分析用） ====================
+
+    async def chat_complete(
+        self,
+        messages: list[dict],
+        temperature: float = 0.3,
+        max_tokens: int = 4000,
+        json_mode: bool = False,
+    ) -> str:
+        """非流式对话，返回完整回复文本
+
+        Args:
+            messages: OpenAI 格式消息列表
+            temperature: 温度（概念提取用低温度 0.3）
+            max_tokens: 最大输出 token
+            json_mode: 是否强制 JSON 输出
+        """
+        kwargs = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+        if json_mode:
+            kwargs["response_format"] = {"type": "json_object"}
+
+        response = await self.client.chat.completions.create(**kwargs)
+        return response.choices[0].message.content or ""
+
     # ==================== 工具 ====================
 
     @staticmethod

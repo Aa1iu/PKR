@@ -188,7 +188,7 @@ function Zhuye() {
 
         <div style={{ borderTop: '1px solid var(--color-border)' }} />
 
-        <ChatPanel />
+        <ChatPanel kbId={currentKbId} />
       </div>
 
       {/* ===== 拖拽手柄 + 右侧边栏 ===== */}

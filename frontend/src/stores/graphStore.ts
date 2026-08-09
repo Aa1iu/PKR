@@ -36,17 +36,14 @@ export const useGraphStore = create<GraphState>((set) => ({
 
     try {
       const data = await getGraph(kbId);
-      // 后端 /graph 当前是 stub 返回空数组 → 同样落 Mock
-      // （Phase 3 过渡期行为：直到后端能产出真实图谱，前端恒显示 Mock；8/8 接真实数据后移除）
       if (data.nodes.length > 0) {
         set({ nodes: data.nodes, edges: data.edges, apiAvailable: true });
       } else {
-        console.warn('[graphStore] API 返回空图谱，使用 Mock 数据');
-        set({ nodes: MOCK_GRAPH.nodes, edges: MOCK_GRAPH.edges, apiAvailable: false });
+        // 该 KB 还没有图谱数据（未导入文档或未运行分析）
+        set({ nodes: [], edges: [], apiAvailable: true, error: '该知识库还没有图谱数据，请先导入文档并运行分析' });
       }
     } catch {
-      console.warn('[graphStore] API 不可用，使用 Mock 数据');
-      set({ nodes: MOCK_GRAPH.nodes, edges: MOCK_GRAPH.edges, apiAvailable: false });
+      set({ nodes: [], edges: [], apiAvailable: false, error: '无法加载图谱数据，请确认后端已启动' });
     } finally {
       set({ loading: false });
     }

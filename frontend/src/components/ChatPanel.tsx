@@ -12,14 +12,14 @@ const { Text } = Typography;
  * AI 对话面板 — 消息列表 + 底部输入栏
  *
  * 与 FloatChat 共享 useChatStore，同一份对话状态。
- * Phase 2 接入真实 SSE 流式 API 时替换 mock setTimeout。
+ * 接入真实 SSE 流式 API，有 kbId 时基于知识库上下文回答。
  */
-function ChatPanel() {
+function ChatPanel({ kbId }: { kbId?: string | null }) {
   const messages = useChatStore((s) => s.messages);
   const inputValue = useChatStore((s) => s.inputValue);
   const sending = useChatStore((s) => s.sending);
   const setInputValue = useChatStore((s) => s.setInputValue);
-  const handleStream = useChatStream();
+  const handleStream = useChatStream(kbId);
 
   const msgListRef = useRef<HTMLDivElement>(null);
 

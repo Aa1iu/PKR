@@ -14,8 +14,8 @@ export interface Doc {
   filename: string;
   type: 'pdf' | 'pptx' | 'docx' | 'md' | 'txt';
   pages: number;
-  size: string;
-  status: 'processing' | 'analyzed' | 'failed';
+  size: number;  // 字节数，后端返回 number
+  status: 'processing' | 'ready' | 'analyzed' | 'error' | 'failed';
   created_at: string;
 }
 

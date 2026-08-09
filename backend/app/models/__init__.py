@@ -1,7 +1,7 @@
 """数据库 ORM 模型"""
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import Column, String, Text, DateTime, Integer, ForeignKey, JSON
 from sqlalchemy.orm import relationship
@@ -20,7 +20,7 @@ class KnowledgeBase(Base):
     name = Column(String(100), nullable=False)
     description = Column(Text, default="")
     tags = Column(String(500), default="")  # 逗号分隔存储，API 层转换为 list[str]
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     documents = relationship("Document", back_populates="kb", cascade="all, delete-orphan")
     concepts = relationship("Concept", back_populates="kb", cascade="all, delete-orphan")
@@ -39,7 +39,7 @@ class Document(Base):
     file_size = Column(Integer, default=0)  # 字节
     total_pages = Column(Integer, default=0)
     status = Column(String(20), default="processing")  # processing, ready, error
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     kb = relationship("KnowledgeBase", back_populates="documents")
     pages = relationship("DocumentPage", back_populates="document", cascade="all, delete-orphan")
@@ -68,7 +68,7 @@ class Concept(Base):
     name = Column(String(100), nullable=False)
     definition = Column(Text, default="")
     concept_type = Column(String(20), default="其他")  # 基础概念 | 技术方法 | 工具框架 | 应用场景 | 其他
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     kb = relationship("KnowledgeBase", back_populates="concepts")
     doc_refs = relationship("ConceptDocRef", back_populates="concept", cascade="all, delete-orphan")
@@ -107,7 +107,7 @@ class Relation(Base):
     target_concept_id = Column(String(16), ForeignKey("concepts.id"), nullable=False)
     relation_type = Column(String(20), nullable=False)  # 前置依赖 | 概念延伸 | 对比关系 | 包含关系 | 应用关系
     description = Column(Text, default="")
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     kb = relationship("KnowledgeBase", back_populates="relations")
     source_concept = relationship("Concept", foreign_keys=[source_concept_id], back_populates="relations_from")
@@ -124,8 +124,8 @@ class ChatMessage(Base):
     kb_id = Column(String(16), ForeignKey("knowledge_bases.id"), nullable=True)  # NULL=全局对话
     role = Column(String(10), nullable=False)  # user | assistant
     content = Column(Text, nullable=False)
-    sources = Column(JSON, default=list)  # [{"doc_name":"...","doc_id":"...","page":1,"chunk_text":"...","score":0.9}]
-    follow_up_questions = Column(JSON, default=list)  # ["追问1", "追问2"]
-    created_at = Column(DateTime, default=datetime.utcnow)
+    sources = Column(JSON, default=lambda: [])
+    follow_up_questions = Column(JSON, default=lambda: [])
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     kb = relationship("KnowledgeBase", back_populates="chat_messages")
