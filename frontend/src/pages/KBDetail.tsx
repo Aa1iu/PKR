@@ -47,6 +47,7 @@ const MOCK_DOCS: Doc[] = [
 function KBDetail() {
   const navigate = useNavigate();
   const currentKbId = useKBStore((s) => s.currentKbId);
+  const setCurrentKbId = useKBStore((s) => s.setCurrentKbId);
 
   const [docs, setDocs] = useState<Doc[]>([]);
   const [loading, setLoading] = useState(true);
@@ -55,20 +56,35 @@ function KBDetail() {
   const [apiAvailable, setApiAvailable] = useState<boolean | null>(null);
   const [retryKey, setRetryKey] = useState(0);
 
-  // Render-phase：currentKbId 变为 null 时直接落 Mock，避免 effect 中同步 setState
-  const [prevKbId, setPrevKbId] = useState(currentKbId);
-  if (currentKbId !== prevKbId) {
-    setPrevKbId(currentKbId);
-    if (!currentKbId) {
-      setDocs(MOCK_DOCS);
-      setApiAvailable(false);
-      setLoading(false);
-    }
-  }
-
-  // 加载文档列表：retryKey 变化时触发（含首次挂载）；仅 currentKbId 非空时请求 API
+  // 刷新后 store 丢失 currentKbId → 自动从 API 加载 KB 列表并选中第一个
   useEffect(() => {
-    if (!currentKbId) return; // render-phase 已落 Mock，此处跳过
+    if (currentKbId) return;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const { getKBs } = await import('../api');
+        const list = await getKBs();
+        if (!cancelled && list.length > 0) {
+          setCurrentKbId(list[0].id);
+        } else if (!cancelled) {
+          setLoading(false);
+          setError('还没有知识库，请先创建');
+        }
+      } catch {
+        if (!cancelled) {
+          setLoading(false);
+          setError('加载知识库列表失败，请确认后端已启动');
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 加载文档列表
+  useEffect(() => {
+    if (!currentKbId) return;
 
     let cancelled = false;
 
@@ -78,11 +94,11 @@ function KBDetail() {
         if (!cancelled) {
           setDocs(list);
           setApiAvailable(true);
+          setError(null);
         }
       } catch {
         if (!cancelled) {
-          console.warn('[KBDetail] API 不可用，使用 Mock 数据');
-          setDocs(MOCK_DOCS);
+          setError('加载文档列表失败，请确认后端已启动');
           setApiAvailable(false);
         }
       } finally {
@@ -207,12 +223,14 @@ function KBDetail() {
       key: 'status',
       width: 90,
       render: (s: Doc['status']) => {
-        const map: Record<Doc['status'], { color: string; label: string }> = {
+        const map: Record<string, { color: string; label: string }> = {
           processing: { color: 'blue', label: '解析中' },
+          ready: { color: 'green', label: '已就绪' },
           analyzed: { color: 'green', label: '已分析' },
-          failed: { color: 'red', label: '失败' },
+          error: { color: 'red', label: '失败' },
         };
-        return <Tag color={map[s].color}>{map[s].label}</Tag>;
+        const item = map[s] || { color: 'default' as const, label: s };
+        return <Tag color={item.color}>{item.label}</Tag>;
       },
     },
     {
@@ -230,7 +248,7 @@ function KBDetail() {
           <Button
             type="link"
             icon={<EyeOutlined />}
-            onClick={() => navigate(`/wendang/${record.doc_id}`)}
+            onClick={() => navigate(`/wendang/${record.doc_id}`, { state: { kbId: currentKbId } })}
           >
             阅读
           </Button>

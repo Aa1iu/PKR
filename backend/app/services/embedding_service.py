@@ -27,6 +27,8 @@ class EmbeddingService:
             return  # Mock 模式不需要模型
         from FlagEmbedding import BGEM3FlagModel
         from ..core.config import settings
+        # 优先用 HF 镜像（国内网络），否则用本地缓存
+        os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
         self.model = BGEM3FlagModel(
             settings.EMBEDDING_MODEL,
             use_fp16=settings.EMBEDDING_DEVICE == "cuda",

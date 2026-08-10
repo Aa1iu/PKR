@@ -1,20 +1,19 @@
 import { useCallback } from 'react';
 import { message } from 'antd';
 import { useChatStore } from '../stores/chatStore';
-import { mockStreamChat } from '../api/chat';
-// Phase 2 后端就绪后改为 import { streamChat } from '../api/chat';
+import { streamChat } from '../api/chat';
 
 /**
  * 流式对话发送 hook — ChatPanel 与 FloatChat 共享
+ *
+ * @param kbId  知识库 ID（可选）。有则基于 KB 上下文回答，无则全局对话。
  *
  * 调用 handleSend(question) 即启动一次流式对话：
  *   1. 创建 userMsg + 空 assistant 占位消息
  *   2. 逐 token 追加到 assistant 消息
  *   3. done 后写入 sources + follow_up_questions
- *
- * Phase 2 后端就绪后将 mockStreamChat 替换为 streamChat。
  */
-export function useChatStream() {
+export function useChatStream(kbId?: string | null) {
   const addMessage = useChatStore((s) => s.addMessage);
   const appendToken = useChatStore((s) => s.appendToken);
   const finishMessage = useChatStore((s) => s.finishMessage);
@@ -52,9 +51,13 @@ export function useChatStream() {
         created_at: new Date().toISOString(),
       });
 
-      // 3. 流式接收
+      // 3. 流式接收（真实 SSE API）
+      const req = kbId
+        ? { question, context_type: 'kb' as const, kb_id: kbId }
+        : { question, context_type: 'global' as const };
+
       try {
-        for await (const event of mockStreamChat({ question, context_type: 'global' })) {
+        for await (const event of streamChat(req)) {
           switch (event.type) {
             case 'token':
               appendToken(aiMsgId, event.content!);
@@ -81,11 +84,11 @@ export function useChatStream() {
           }
         }
       } catch {
-        message.error('对话连接异常');
+        message.error('对话连接异常，请确认后端已启动');
         setSending(false);
       }
     },
-    [addMessage, appendToken, finishMessage, setSending, ensureConversation, autoTitleConversation],
+    [kbId, addMessage, appendToken, finishMessage, setSending, ensureConversation, autoTitleConversation],
   );
 
   return handleSend;

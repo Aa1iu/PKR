@@ -60,6 +60,51 @@ def estimate_page_num(chunk_index: int, chunk_size: int = 500,
     return max(1, (chunk_index * chunk_size) // chars_per_page + 1)
 
 
+def parse_document_pages(file_path: str) -> list[tuple[int, str]]:
+    """逐页解析文档，返回 [(page_num, page_text), ...]
+
+    与 parse_document() 不同：此函数保留真实页面边界，用于文档阅读。
+    """
+    ext = os.path.splitext(file_path)[1].lower()
+
+    if ext == ".pdf":
+        import fitz
+        doc = fitz.open(file_path)
+        pages = [(i + 1, page.get_text()) for i, page in enumerate(doc)]
+        doc.close()
+        return pages
+
+    elif ext in (".md", ".txt"):
+        # Markdown/TXT：全文作为一个"页面"，保持格式完整性
+        import chardet
+        with open(file_path, "rb") as f:
+            raw = f.read()
+        encoding = chardet.detect(raw)["encoding"] or "utf-8"
+        text = raw.decode(encoding)
+        return [(1, text)]
+
+    elif ext == ".docx":
+        from docx import Document as DocxDocument
+        doc = DocxDocument(file_path)
+        text = "\n".join(p.text for p in doc.paragraphs)
+        return [(1, text)]
+
+    elif ext == ".pptx":
+        from pptx import Presentation
+        prs = Presentation(file_path)
+        pages = []
+        for i, slide in enumerate(prs.slides, 1):
+            texts = []
+            for shape in slide.shapes:
+                if shape.has_text_frame:
+                    texts.append(shape.text)
+            pages.append((i, "\n".join(texts)))
+        return pages
+
+    else:
+        raise ValueError(f"不支持的文件类型: {ext}")
+
+
 def jaccard_deduplicate(results: list[dict], threshold: float = 0.8) -> list[dict]:
     """词级 Jaccard 文本去重（中文用 2-gram，英文用空格分词）
 

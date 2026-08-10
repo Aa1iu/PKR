@@ -26,7 +26,7 @@ from ..schemas import (
     PageImageResponse, SuccessResponse,
 )
 from ..services.chroma_service import get_chroma_service
-from ..services.document_parser import parse_document, chunk_text, estimate_page_num
+from ..services.document_parser import parse_document, parse_document_pages, chunk_text
 from ..services.embedding_service import get_embedding_service
 
 router = APIRouter(prefix="/api/kbs/{kb_id}/docs", tags=["文档"])
@@ -40,12 +40,20 @@ def _process_document_background(doc_id: str, kb_id: str, file_path: str, filena
         if not doc:
             return
 
-        # 1. 解析文档
-        text = parse_document(file_path)
-        chars_per_page = 800
+        # 1. 逐页解析 → DocumentPage（阅读用，保留真实页码）
+        pages = parse_document_pages(file_path)
+        for page_num, page_text in pages:
+            db.add(DocumentPage(
+                doc_id=doc_id,
+                page_num=page_num,
+                text=page_text,
+            ))
+        doc.total_pages = len(pages)
+        db.flush()
 
-        # 2. 文本分块
-        chunks = chunk_text(text, settings.CHUNK_SIZE, settings.CHUNK_OVERLAP)
+        # 2. 全文解析 → 分块 → ChromaDB（RAG 用，重叠 chunk 效果更好）
+        full_text = parse_document(file_path)
+        chunks = chunk_text(full_text, settings.CHUNK_SIZE, settings.CHUNK_OVERLAP)
 
         if not chunks:
             doc.status = "error"
@@ -63,7 +71,7 @@ def _process_document_background(doc_id: str, kb_id: str, file_path: str, filena
                 "kb_id": kb_id,
                 "doc_id": doc_id,
                 "doc_name": filename,
-                "page_num": estimate_page_num(i, settings.CHUNK_SIZE, chars_per_page),
+                "page_num": 0,  # chunk 无精确页码
                 "chunk_index": i,
             })
 
@@ -75,18 +83,8 @@ def _process_document_background(doc_id: str, kb_id: str, file_path: str, filena
             metadatas=metadatas,
         )
 
-        # 5. SQLite DocumentPage 写入
-        for i, chunk in enumerate(chunks):
-            page = DocumentPage(
-                doc_id=doc_id,
-                page_num=metadatas[i]["page_num"],
-                text=chunk,
-            )
-            db.add(page)
-
-        # 6. 更新文档状态
+        # 5. 更新文档状态
         doc.status = "ready"
-        doc.total_pages = len(set(m["page_num"] for m in metadatas))
         db.commit()
 
     except Exception as e:

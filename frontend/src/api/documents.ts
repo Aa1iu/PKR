@@ -28,3 +28,18 @@ export async function deleteDocument(
 ): Promise<{ success: boolean }> {
   return request(`/kbs/${kbId}/docs/${docId}`, { method: 'DELETE' });
 }
+
+/** 文档内容分页 */
+export interface DocContent {
+  pages: { page_num: number; text: string }[];
+  total_pages: number;
+}
+
+/** GET /api/kbs/{kb_id}/docs/{doc_id}/content?page=N — 获取文档分页内容 */
+export async function getDocumentContent(
+  kbId: string,
+  docId: string,
+  page: number = 1,
+): Promise<DocContent> {
+  return request<DocContent>(`/kbs/${kbId}/docs/${docId}/content?page=${page}`);
+}
