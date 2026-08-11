@@ -16,6 +16,7 @@
     "d3": "^7.9.0",
     "echarts": "^6.1.0",
     "echarts-for-react": "^3.0.6",
+    "mammoth": "^1.12.1",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "react-markdown": "^10.1.0",
