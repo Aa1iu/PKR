@@ -43,3 +43,13 @@ export async function getDocumentContent(
 ): Promise<DocContent> {
   return request<DocContent>(`/kbs/${kbId}/docs/${docId}/content?page=${page}`);
 }
+
+/** 获取原始文件流 URL（供 PDF iframe / DOCX mammoth 下载用） */
+export function getDocumentFileUrl(kbId: string, docId: string): string {
+  return `/api/kbs/${kbId}/docs/${docId}/file`;
+}
+
+/** 获取文档页图片 URL（PPTX 画廊用） */
+export function getPageImageUrl(kbId: string, docId: string, page: number): string {
+  return `/api/kbs/${kbId}/docs/${docId}/page-image?page=${page}`;
+}

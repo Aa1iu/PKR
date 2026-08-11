@@ -4,45 +4,13 @@ import { Card, Button, Upload, Table, Tag, Space, Typography, message, Spin, Res
 import { ArrowLeftOutlined, InboxOutlined, DeleteOutlined, EyeOutlined, ApartmentOutlined, ReloadOutlined } from '@ant-design/icons';
 import type { Doc } from '../types';
 import type { UploadProps } from 'antd';
-import { validateFileType, uploadDocToKB, createMockDoc } from '../utils/upload';
+import { validateFileType, uploadDocToKB } from '../utils/upload';
 import { getDocuments, deleteDocument as apiDeleteDoc } from '../api';
 import { useKBStore } from '../stores/kbStore';
 import EmptyState from '../components/EmptyState';
 
 const { Dragger } = Upload;
 const { Title, Text } = Typography;
-
-// ========== Mock 兜底数据 ==========
-// Phase 2: API 不可用时作为初始数据；Phase 3 后端稳定后移除
-const MOCK_DOCS: Doc[] = [
-  {
-    doc_id: 'doc_001',
-    filename: '卷积神经网络详解.pdf',
-    type: 'pdf',
-    pages: 32,
-    size: '2.4 MB',
-    status: 'analyzed',
-    created_at: '2026-07-22',
-  },
-  {
-    doc_id: 'doc_002',
-    filename: '反向传播推导过程.docx',
-    type: 'docx',
-    pages: 15,
-    size: '1.1 MB',
-    status: 'analyzed',
-    created_at: '2026-07-23',
-  },
-  {
-    doc_id: 'doc_003',
-    filename: '激活函数对比.pptx',
-    type: 'pptx',
-    pages: 28,
-    size: '5.7 MB',
-    status: 'processing',
-    created_at: '2026-07-25',
-  },
-];
 
 function KBDetail() {
   const navigate = useNavigate();
@@ -52,8 +20,6 @@ function KBDetail() {
   const [docs, setDocs] = useState<Doc[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  /** 标记是否已尝试过 API 并失败，后续操作走 Mock 兜底 */
-  const [apiAvailable, setApiAvailable] = useState<boolean | null>(null);
   const [retryKey, setRetryKey] = useState(0);
 
   // 刷新后 store 丢失 currentKbId → 自动从 API 加载 KB 列表并选中第一个
@@ -93,13 +59,12 @@ function KBDetail() {
         const list = await getDocuments(currentKbId!);
         if (!cancelled) {
           setDocs(list);
-          setApiAvailable(true);
           setError(null);
         }
-      } catch {
+      } catch (err: unknown) {
         if (!cancelled) {
-          setError('加载文档列表失败，请确认后端已启动');
-          setApiAvailable(false);
+          const msg = err instanceof Error ? err.message : '加载文档列表失败，请确认后端已启动';
+          setError(msg);
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -121,24 +86,19 @@ function KBDetail() {
     async (file: File): Promise<boolean> => {
       if (!validateFileType(file)) return false;
 
-      if (currentKbId && apiAvailable !== false) {
-        // 优先走真实 API
-        const doc = await uploadDocToKB(currentKbId, file);
-        if (doc) {
-          setDocs((prev) => [doc, ...prev]);
-          return true;
-        }
-        // API 调用失败 → 后续切回 Mock 模式
-        setApiAvailable(false);
+      if (!currentKbId) {
+        message.warning('请先选择知识库');
+        return false;
       }
 
-      // Mock 兜底
-      const mockDoc = createMockDoc(file);
-      setDocs((prev) => [mockDoc, ...prev]);
-      message.success(`${file.name} 上传成功（Mock 模式）`);
-      return true;
+      const doc = await uploadDocToKB(currentKbId, file);
+      if (doc) {
+        setDocs((prev) => [doc, ...prev]);
+        return true;
+      }
+      return false;
     },
-    [currentKbId, apiAvailable],
+    [currentKbId],
   );
 
   // ===== 上传组件配置 =====
@@ -151,7 +111,6 @@ function KBDetail() {
       showRemoveIcon: true,
     },
     customRequest: (options) => {
-      // AntD Upload customRequest：接管上传流程
       const { file, onSuccess, onError } = options;
       handleUpload(file as File).then((ok) => {
         if (ok) onSuccess?.('ok');
@@ -163,30 +122,17 @@ function KBDetail() {
   // ===== 删除 =====
   const handleDelete = useCallback(
     async (docId: string, filename: string) => {
-      // 临时 ID（mock_ 前缀的）直接本地删除
-      if (docId.startsWith('mock_')) {
+      if (!currentKbId) return;
+
+      try {
+        await apiDeleteDoc(currentKbId, docId);
         setDocs((prev) => prev.filter((d) => d.doc_id !== docId));
         message.success(`已删除「${filename}」`);
-        return;
+      } catch {
+        message.error('删除失败，请稍后重试');
       }
-
-      if (currentKbId && apiAvailable !== false) {
-        try {
-          await apiDeleteDoc(currentKbId, docId);
-          setDocs((prev) => prev.filter((d) => d.doc_id !== docId));
-          message.success(`已删除「${filename}」`);
-          return;
-        } catch {
-          message.error('删除失败，请稍后重试');
-          return;
-        }
-      }
-
-      // Mock 兜底
-      setDocs((prev) => prev.filter((d) => d.doc_id !== docId));
-      message.success(`已删除「${filename}」（Mock 模式）`);
     },
-    [currentKbId, apiAvailable],
+    [currentKbId],
   );
 
   // ===== 表格列 =====
@@ -226,7 +172,6 @@ function KBDetail() {
         const map: Record<string, { color: string; label: string }> = {
           processing: { color: 'blue', label: '解析中' },
           ready: { color: 'green', label: '已就绪' },
-          analyzed: { color: 'green', label: '已分析' },
           error: { color: 'red', label: '失败' },
         };
         const item = map[s] || { color: 'default' as const, label: s };
@@ -283,17 +228,11 @@ function KBDetail() {
           知识图谱
         </Button>
         <Text type="secondary">共 {docs.length} 篇文档</Text>
-        {apiAvailable === true && (
-          <Tag color="green" style={{ marginLeft: 4 }}>API</Tag>
-        )}
-        {apiAvailable === false && (
-          <Tag color="orange" style={{ marginLeft: 4 }}>Mock</Tag>
-        )}
       </div>
 
       {/* 文档上传区域 */}
       <Card style={{ marginTop: 16, flexShrink: 0 }}>
-        <Dragger {...uploadProps} disabled={!currentKbId && apiAvailable !== false}>
+        <Dragger {...uploadProps} disabled={!currentKbId}>
           <p className="ant-upload-drag-icon">
             <InboxOutlined />
           </p>

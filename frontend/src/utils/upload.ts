@@ -37,24 +37,3 @@ export async function uploadDocToKB(kbId: string, file: File): Promise<Doc | nul
   }
 }
 
-/**
- * 从 File 对象创建本地 Mock Doc 文档记录
- *
- * 仅在后端 API 不可用时作为临时兜底，Phase 3 后端稳定后移除。
- */
-export function createMockDoc(file: File): Doc {
-  const ext = file.name.split('.').pop()?.toLowerCase() || '';
-
-  return {
-    doc_id: `mock_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-    filename: file.name,
-    type: ext as Doc['type'],
-    pages: Math.floor(Math.random() * 50) + 1,
-    size:
-      file.size > 1024 * 1024
-        ? `${(file.size / 1024 / 1024).toFixed(1)} MB`
-        : `${(file.size / 1024).toFixed(1)} KB`,
-    status: 'processing',
-    created_at: new Date().toISOString().split('T')[0],
-  };
-}

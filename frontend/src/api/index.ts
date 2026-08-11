@@ -6,6 +6,7 @@
  */
 
 export { ApiError } from './client';
-export { getKBs } from './kbs';
-export { getDocuments, uploadDocument, deleteDocument } from './documents';
-export { getGraph, MOCK_GRAPH } from './graph';
+export { getKBs, createKB, deleteKB } from './kbs';
+export { getDocuments, uploadDocument, deleteDocument, getDocumentContent, getDocumentFileUrl, getPageImageUrl } from './documents';
+export type { DocContent } from './documents';
+export { getGraph } from './graph';

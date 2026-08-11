@@ -1,39 +1,6 @@
 import { create } from 'zustand';
 import type { ChatMessage, Conversation } from '../types';
 
-// ========== Mock 初始对话 ==========
-
-const MOCK_CONVERSATIONS: Conversation[] = [
-  {
-    id: 'conv_mock_1',
-    title: '什么是深度学习？',
-    messages: [
-      { id: 'm1', role: 'user', content: '什么是深度学习？', created_at: '2026-08-01T10:00:00Z' },
-      {
-        id: 'm2', role: 'assistant', content: '深度学习是机器学习的一个子集，它基于人工神经网络，通过多层非线性变换从数据中自动学习层次化特征表示。与传统机器学习相比，深度学习无需手工设计特征，能够端到端地解决复杂的模式识别问题。',
-        sources: [], follow_up_questions: ['能举个 CNN 的例子吗？', '深度学习和传统机器学习有什么区别？'], created_at: '2026-08-01T10:00:02Z',
-      },
-    ],
-    created_at: '2026-08-01T10:00:00Z',
-    updated_at: '2026-08-01T10:00:02Z',
-  },
-  {
-    id: 'conv_mock_2',
-    title: 'Transformer 注意力机制',
-    messages: [
-      { id: 'm3', role: 'user', content: 'Transformer 的注意力机制是如何工作的？', created_at: '2026-08-02T14:00:00Z' },
-      {
-        id: 'm4', role: 'assistant', content: '自注意力机制（Self-Attention）通过 Q（Query）、K（Key）、V（Value）三个矩阵来计算序列中每个位置与其他位置的关联权重。具体步骤：1) 从输入嵌入生成 Q、K、V；2) 计算注意力分数 QK^T / √d_k；3) Softmax 归一化得到注意力权重；4) 加权求和 V 得到输出。',
-        sources: [], follow_up_questions: [], created_at: '2026-08-02T14:00:03Z',
-      },
-    ],
-    created_at: '2026-08-02T14:00:00Z',
-    updated_at: '2026-08-02T14:00:03Z',
-  },
-];
-
-// ========== Store ==========
-
 interface ChatState {
   /** 所有会话 */
   conversations: Conversation[];
@@ -73,7 +40,7 @@ interface ChatState {
  * 全局对话状态 — 多会话管理 + ChatPanel / FloatChat 共享
  */
 export const useChatStore = create<ChatState>((set, get) => ({
-  conversations: MOCK_CONVERSATIONS,
+  conversations: [],
   currentConversationId: null,
   messages: [],
   inputValue: '',

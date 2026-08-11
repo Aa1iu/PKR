@@ -70,9 +70,11 @@ type SimEdge = Omit<GraphEdge, 'source' | 'target'> & {
 interface Props {
   nodes: GraphNode[];
   edges: GraphEdge[];
+  /** doc_id → filename 映射，供浮窗文档链接显示文件名 */
+  docNames?: Record<string, string>;
 }
 
-function KnowledgeGraph({ nodes, edges }: Props) {
+function KnowledgeGraph({ nodes, edges, docNames = {} }: Props) {
   const navigate = useNavigate();
   const containerRef = useRef<HTMLDivElement>(null);
   const svgAreaRef = useRef<HTMLDivElement>(null);
@@ -466,15 +468,15 @@ function KnowledgeGraph({ nodes, edges }: Props) {
                   paddingTop: 6,
                 }}
               >
-                {tooltip.node.doc_refs.map((r, i) => (
+                <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', marginBottom: 4 }}>
+                  来源文档：
+                </div>
+                {tooltip.node.doc_refs.map((docId, i) => {
+                  const filename = docNames[docId] || docId;
+                  return (
                   <div
                     key={i}
-                    onClick={() =>
-                      navigate(
-                        `/wendang/${r.doc_id}`,
-                        r.page > 0 ? { state: { page: r.page } } : undefined,
-                      )
-                    }
+                    onClick={() => navigate(`/wendang/${docId}`)}
                     style={{
                       display: 'flex',
                       gap: 4,
@@ -492,10 +494,10 @@ function KnowledgeGraph({ nodes, edges }: Props) {
                       e.currentTarget.style.background = 'transparent';
                     }}
                   >
-                    <FileTextOutlined style={{ fontSize: 10 }} /> {r.filename}
-                    {r.page > 0 ? ` · p.${r.page}` : ''}
+                    <FileTextOutlined style={{ fontSize: 10 }} /> {filename}
                   </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>

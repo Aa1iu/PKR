@@ -23,7 +23,9 @@ function SidebarDocList({ docs, sidebarWidth, onDocDrop }: Props) {
 
   const statusMap: Record<Doc['status'], { color: string; label: string }> = {
     processing: { color: 'blue', label: '解析中' },
+    ready: { color: 'green', label: '已就绪' },
     analyzed: { color: 'green', label: '已分析' },
+    error: { color: 'red', label: '失败' },
     failed: { color: 'red', label: '失败' },
   };
 

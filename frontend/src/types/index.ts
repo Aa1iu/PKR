@@ -26,7 +26,7 @@ export interface GraphNode {
   definition: string;
   type: '基础概念' | '技术方法' | '工具框架' | '应用场景' | '其他';
   degree: number;
-  doc_refs: { doc_id: string; filename: string; page: number }[];
+  doc_refs: string[];
 }
 
 /** 图谱边 */

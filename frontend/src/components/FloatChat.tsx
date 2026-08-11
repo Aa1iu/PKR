@@ -20,7 +20,7 @@ const BTN_SIZE = 52;
  *
  * - 右下角悬浮按钮，点击展开对话窗口
  * - 可拖拽标题栏移动位置
- * - Mock AI 回复（与 ChatPanel 一致，Phase 2 后续接入 SSE）
+ * - AI 回复（SSE 流式）
  * - 通过 Portal 渲染到 document.body，全局可用
  */
 function FloatChat() {

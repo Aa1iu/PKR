@@ -10,24 +10,50 @@ import {
 } from '@ant-design/icons';
 import MarkdownRenderer from '../components/MarkdownRenderer';
 import PdfPageRenderer from '../components/PdfPageRenderer';
-import { getDocumentContent, type DocContent } from '../api/documents';
+import DocxHtmlRenderer from '../components/DocxHtmlRenderer';
+import PptxGalleryRenderer from '../components/PptxGalleryRenderer';
+import { getDocumentContent, getDocumentFileUrl, type DocContent } from '../api/documents';
 import { useKBStore } from '../stores/kbStore';
 import type { Doc } from '../types';
 
 const { Title, Text } = Typography;
 
-// ========== 渲染器选择 ==========
+// ========== 渲染器切换 ==========
 
-function getRenderer(type: Doc['type'], content: string) {
+function renderByType(
+  type: Doc['type'],
+  kbId: string,
+  docId: string,
+  content: DocContent | null,
+  currentText: string,
+  fullMarkdown: string,
+) {
   switch (type) {
-    case 'md':
-      return <MarkdownRenderer content={content} />;
     case 'pdf':
+      return (
+        <iframe
+          src={getDocumentFileUrl(kbId, docId)}
+          style={{ width: '100%', height: '100%', border: 'none', minHeight: 'calc(100vh - 250px)' }}
+          title="PDF 预览"
+        />
+      );
     case 'docx':
-    case 'txt':
+      return <DocxHtmlRenderer kbId={kbId} docId={docId} />;
     case 'pptx':
+      return (
+        <PptxGalleryRenderer
+          kbId={kbId}
+          docId={docId}
+          totalPages={content?.total_pages || 1}
+        />
+      );
+    case 'md':
+      return <MarkdownRenderer content={fullMarkdown} />;
+    case 'txt':
     default:
-      return <PdfPageRenderer content={content} />;
+      return currentText
+        ? <PdfPageRenderer content={currentText} />
+        : <Text type="secondary">（本页无内容）</Text>;
   }
 }
 
@@ -118,7 +144,7 @@ function DocReader() {
   const fullMarkdown = isMarkdown
     ? (content?.pages || []).map(p => p.text).join('\n\n')
     : '';
-  const showPagination = !isMarkdown && totalPages > 1;
+  const showPagination = !isMarkdown && inferredType === 'txt' && totalPages > 1;
 
   // ===== 加载态 =====
   if (loading) {
@@ -130,7 +156,9 @@ function DocReader() {
   }
 
   // ===== 错误态 =====
-  if (error || !content) {
+  // PDF/DOCX 使用文件流渲染，不需要文本内容即可展示；PPTX/TXT/MD 需要 content
+  const needsContent = !['pdf', 'docx'].includes(inferredType);
+  if (error || (needsContent && !content)) {
     return (
       <div style={{ height: 'calc(100vh - 48px)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <Result
@@ -173,12 +201,7 @@ function DocReader() {
         styles={{ body: { flex: 1, minHeight: 0, overflow: 'hidden', padding: 0 } }}
       >
         <div ref={contentRef} style={{ height: '100%', overflow: 'auto', padding: '24px 32px' }}>
-          {isMarkdown
-            ? getRenderer('md', fullMarkdown)
-            : currentText
-              ? getRenderer(inferredType, currentText)
-              : <Text type="secondary">（本页无内容）</Text>
-          }
+          {renderByType(inferredType, kbId!, docId!, content, currentText, fullMarkdown)}
         </div>
       </Card>
 
