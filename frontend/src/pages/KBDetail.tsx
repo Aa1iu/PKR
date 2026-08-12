@@ -127,6 +127,9 @@ function KBDetail() {
       try {
         await apiDeleteDoc(currentKbId, docId);
         setDocs((prev) => prev.filter((d) => d.doc_id !== docId));
+        // 同步更新 store 缓存（图谱页等共享页面看到删除结果）
+        const { docs, setDocs: setStoreDocs } = useKBStore.getState();
+        setStoreDocs(docs.filter((d) => d.doc_id !== docId), currentKbId);
         message.success(`已删除「${filename}」`);
       } catch {
         message.error('删除失败，请稍后重试');

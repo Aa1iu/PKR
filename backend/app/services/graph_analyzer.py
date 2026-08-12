@@ -319,10 +319,23 @@ class GraphAnalyzer:
                 .all()
             )
 
-            chunks = [p[0].text for p in pages if p[0].text]
+            # 概念提取用重叠 chunk（与 RAG 一致的语义最优分块）：
+            # 每篇文档的全文重新分块，而非单页文本
+            from .document_parser import chunk_text
+            from ..core.config import settings as app_settings
+
             doc_ids = list(set(p[0].doc_id for p in pages))
-            # chunk → 所属文档映射（概念-文档关联用）
-            chunk_doc_map = [(p[0].text, p[0].doc_id) for p in pages if p[0].text]
+            chunks: list[str] = []
+            chunk_doc_map: list[tuple[str, str]] = []
+            for p in pages:
+                if not p[0].text:
+                    continue
+                doc_chunks = chunk_text(
+                    p[0].text, app_settings.CHUNK_SIZE, app_settings.CHUNK_OVERLAP
+                )
+                for c in doc_chunks:
+                    chunks.append(c)
+                    chunk_doc_map.append((c, p[0].doc_id))
             db.close()
 
             if not chunks:

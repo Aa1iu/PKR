@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Card, Button, Select, Typography, Spin, Empty, Result } from 'antd';
 import { ArrowLeftOutlined, ReloadOutlined } from '@ant-design/icons';
 import type { KB, Doc } from '../types';
-import { getKBs, getDocuments } from '../api';
+import { getKBs } from '../api';
 import KnowledgeGraph from '../components/KnowledgeGraph';
 import { useGraphStore } from '../stores/graphStore';
 import { useKBStore } from '../stores/kbStore';
@@ -25,7 +25,9 @@ function GraphPage() {
 
   const [kbs, setLocalKbs] = useState<KB[]>([]);
   const [kbsLoading, setKbsLoading] = useState(true);
-  const [docs, setDocs] = useState<Doc[]>([]);
+  // 文档列表从 kbStore 缓存读取（避免与首页重复请求）
+  const docs = useKBStore((s) => s.docs);
+  const fetchDocsIfNeeded = useKBStore((s) => s.fetchDocsIfNeeded);
 
   // 加载知识库列表
   useEffect(() => {
@@ -54,19 +56,19 @@ function GraphPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 加载当前知识库的文档列表（用于 doc_id → filename 映射）
+  // 加载当前知识库的文档列表（走 kbStore 缓存，命中不重复请求）
   useEffect(() => {
     if (!currentKbId) return;
     let cancelled = false;
     (async () => {
       try {
-        const list = await getDocuments(currentKbId);
-        if (!cancelled) setDocs(list);
+        await fetchDocsIfNeeded(currentKbId);
       } catch {
-        if (!cancelled) setDocs([]);
+        // 静默失败
       }
     })();
     return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentKbId]);
 
   // doc_id → filename 映射

@@ -62,7 +62,7 @@ function Zhuye() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ===== currentKbId 变化时加载对应文档列表 =====
+  // ===== currentKbId 变化时加载对应文档列表（走 kbStore 缓存） =====
   useEffect(() => {
     if (!currentKbId) return;
 
@@ -70,7 +70,8 @@ function Zhuye() {
 
     async function loadDocs() {
       try {
-        const list = await getDocuments(currentKbId!);
+        const { fetchDocsIfNeeded } = useKBStore.getState();
+        const list = await fetchDocsIfNeeded(currentKbId!);
         if (!cancelled) {
           setDocs(list);
         }
@@ -81,6 +82,7 @@ function Zhuye() {
 
     loadDocs();
     return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentKbId]);
 
   // ===== 文档拖拽上传回调 =====
@@ -96,6 +98,9 @@ function Zhuye() {
       const doc = await uploadDocToKB(currentKbId, file);
       if (doc) {
         setDocs((prev) => [doc, ...prev]);
+        // 同步更新 store 缓存（图谱页等共享）
+        const { docs, setDocs: setStoreDocs } = useKBStore.getState();
+        setStoreDocs([doc, ...docs], currentKbId);
       }
     },
     [currentKbId],
