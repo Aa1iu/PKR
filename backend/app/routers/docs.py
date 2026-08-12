@@ -14,7 +14,7 @@ import os
 import uuid
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile, File, Query
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from ..core.config import settings
@@ -86,6 +86,20 @@ def _process_document_background(doc_id: str, kb_id: str, file_path: str, filena
         # 5. 更新文档状态
         doc.status = "ready"
         db.commit()
+
+        # 6. 自动触发图谱分析（后台线程中开独立 event loop 执行，不阻塞上传返回）
+        try:
+            from ..services.graph_analyzer import get_analyzer
+            import threading
+
+            def _run_analysis():
+                import asyncio
+                asyncio.run(get_analyzer().run_analysis(kb_id))
+
+            threading.Thread(target=_run_analysis, daemon=True).start()
+            print(f"[INFO] 文档 {doc_id} 处理完成，已自动触发知识库 {kb_id} 图谱分析")
+        except Exception as e:
+            print(f"[WARN] 自动触发图谱分析失败（不影响文档入库）: {e}")
 
     except Exception as e:
         # 出错时标记文档状态
@@ -276,6 +290,44 @@ def get_doc_content(
     )
 
 
+# ===== 原始文件流（PDF iframe / DOCX mammoth / 下载用） =====
+
+# 扩展名 → MIME type 映射
+MIME_TYPES = {
+    ".pdf": "application/pdf",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ".md": "text/markdown; charset=utf-8",
+    ".txt": "text/plain; charset=utf-8",
+}
+
+
+@router.get("/{doc_id}/file")
+def get_doc_file(
+    kb_id: str,
+    doc_id: str,
+    db: Session = Depends(get_db),
+):
+    """返回文档原始文件（供 PDF iframe / DOCX mammoth / 浏览器查看）"""
+    doc = db.query(Document).filter(
+        Document.id == doc_id, Document.kb_id == kb_id
+    ).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="文档不存在")
+
+    if not os.path.exists(doc.file_path):
+        raise HTTPException(status_code=404, detail="文件不存在于服务器")
+
+    ext = os.path.splitext(doc.file_path)[1].lower()
+    media_type = MIME_TYPES.get(ext, "application/octet-stream")
+
+    return FileResponse(
+        doc.file_path,
+        media_type=media_type,
+        filename=doc.filename,
+    )
+
+
 # ===== Phase 3：页图片 =====
 
 @router.get("/{doc_id}/page-image")
@@ -285,9 +337,14 @@ def get_page_image(
     page: int = Query(default=1, ge=1),
     db: Session = Depends(get_db),
 ):
-    """获取文档页图片 — Phase 3 完整实现（PPT/PDF 图片场景）"""
+    """获取文档页图片 — 降级实现：返回源文件流（PPTX 可被浏览器/前端预览）
+
+    完整实现需要 LibreOffice 逐页转 PNG（Phase 5 待做），
+    当前返回源文件，前端 PPTX 画廊可改用下载/原生查看。
+    """
     doc = db.query(Document).filter(Document.id == doc_id, Document.kb_id == kb_id).first()
     if not doc:
         raise HTTPException(status_code=404, detail="文档不存在")
-    # TODO: Phase 3 — LibreOffice 预转 PNG + FileResponse 返回图片
-    return PlainTextResponse("Not Implemented", status_code=501)
+    if not os.path.exists(doc.file_path):
+        raise HTTPException(status_code=404, detail="文件不存在于服务器")
+    return FileResponse(doc.file_path, media_type="application/octet-stream")

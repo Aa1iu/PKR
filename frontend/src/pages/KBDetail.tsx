@@ -193,7 +193,7 @@ function KBDetail() {
           <Button
             type="link"
             icon={<EyeOutlined />}
-            onClick={() => navigate(`/wendang/${record.doc_id}`, { state: { kbId: currentKbId } })}
+            onClick={() => navigate(`/wendang/${currentKbId}/${record.doc_id}`, { state: { docMeta: record } })}
           >
             阅读
           </Button>

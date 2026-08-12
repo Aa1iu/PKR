@@ -15,6 +15,7 @@ import {
 } from 'd3';
 import { FileTextOutlined } from '@ant-design/icons';
 import type { GraphNode, GraphEdge } from '../types';
+import { useKBStore } from '../stores/kbStore';
 
 /**
  * D3 力导向图 — Phase 3 图谱可视化
@@ -76,6 +77,7 @@ interface Props {
 
 function KnowledgeGraph({ nodes, edges, docNames = {} }: Props) {
   const navigate = useNavigate();
+  const currentKbId = useKBStore((s) => s.currentKbId);
   const containerRef = useRef<HTMLDivElement>(null);
   const svgAreaRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -476,7 +478,7 @@ function KnowledgeGraph({ nodes, edges, docNames = {} }: Props) {
                   return (
                   <div
                     key={i}
-                    onClick={() => navigate(`/wendang/${docId}`)}
+                    onClick={() => currentKbId && navigate(`/wendang/${currentKbId}/${docId}`)}
                     style={{
                       display: 'flex',
                       gap: 4,

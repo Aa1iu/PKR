@@ -132,22 +132,22 @@ class LLMService:
             yield chunk
 
     async def _stream_api(self, messages: list[dict]) -> AsyncGenerator[str, None]:
-        """底层 OpenAI 流式调用"""
-        try:
-            response = await self.client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                stream=True,
-                temperature=0.7,
-                max_tokens=2000,
-            )
-            async for chunk in response:
-                if chunk.choices:
-                    delta = chunk.choices[0].delta
-                    if delta.content:
-                        yield delta.content
-        except Exception as e:
-            yield f"[LLM 调用失败: {e}]"
+        """底层 OpenAI 流式调用
+
+        异常向上抛出，由调用方（chat.py）转换为 SSE error 事件。
+        """
+        response = await self.client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            stream=True,
+            temperature=0.7,
+            max_tokens=2000,
+        )
+        async for chunk in response:
+            if chunk.choices:
+                delta = chunk.choices[0].delta
+                if delta.content:
+                    yield delta.content
 
     # ==================== 非流式调用（图谱分析用） ====================
 

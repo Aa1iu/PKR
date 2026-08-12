@@ -135,32 +135,34 @@ class GraphAnalyzer:
         kb_id: str,
         new_concepts: list[dict],
         doc_ids: list[str],
+        chunk_doc_map: list[tuple[str, str]] | None = None,
     ) -> list[Concept]:
-        """去重并写入 Concept 表"""
+        """去重并写入 Concept 表
+
+        chunk_doc_map: [(chunk_text, doc_id), ...]，用于按概念名出现位置关联真实文档。
+        """
         db = SessionLocal()
         emb_service = get_embedding_service()
 
         # 获取已有概念
         existing = db.query(Concept).filter(Concept.kb_id == kb_id).all()
 
-        # 已有概念的向量
-        existing_names = [c.name for c in existing]
-        existing_embs = emb_service.embed(existing_names) if existing_names else []
+        # 已有概念的向量（首轮为空时 all_embs 从空列表开始，批内仍会去重）
+        all_embs = emb_service.embed([c.name for c in existing]) if existing else []
 
         saved: list[Concept] = []
 
         for nc in new_concepts:
-            # 计算与已有概念的相似度
+            # 计算与"所有已确认概念"（已有 + 本批已处理）的相似度
             new_emb = emb_service.embed_query(nc["name"])
             is_dup = False
 
             for i, ext_c in enumerate(existing):
-                if existing_embs:
-                    sim = self._cosine_sim(new_emb, existing_embs[i])
-                    if sim > 0.85:
-                        is_dup = True
-                        saved.append(ext_c)
-                        break
+                sim = self._cosine_sim(new_emb, all_embs[i])
+                if sim > 0.85:
+                    is_dup = True
+                    saved.append(ext_c)
+                    break
 
             if not is_dup:
                 concept = Concept(
@@ -172,14 +174,26 @@ class GraphAnalyzer:
                 db.add(concept)
                 db.flush()  # 获取 ID
                 saved.append(concept)
+                # 新概念加入比较池（含向量），后续概念与之比较
                 existing.append(concept)
-                existing_names.append(nc["name"])
-                if existing_embs:
-                    existing_embs.append(new_emb)
+                all_embs.append(new_emb)
 
-        # 关联 doc_refs
+        # 关联 doc_refs：按概念名在 chunk 中的出现位置关联真实文档
         for concept in saved:
-            for doc_id in doc_ids[:3]:  # 最多关联 3 个文档
+            matched_docs: set[str] = set()
+            if chunk_doc_map:
+                # 概念名可能带括号/空格，取核心词匹配
+                name_core = concept.name.split("（")[0].split("(")[0].strip()
+                for chunk_text, c_doc_id in chunk_doc_map:
+                    if name_core and len(name_core) >= 2 and name_core in chunk_text:
+                        matched_docs.add(c_doc_id)
+                        if len(matched_docs) >= 3:
+                            break
+            # 无匹配时回退：最多关联前 2 个文档（避免完全孤立）
+            if not matched_docs:
+                matched_docs = set(doc_ids[:2])
+
+            for doc_id in matched_docs:
                 ref = ConceptDocRef(
                     concept_id=concept.id,
                     doc_id=doc_id,
@@ -282,6 +296,8 @@ class GraphAnalyzer:
 
             chunks = [p[0].text for p in pages if p[0].text]
             doc_ids = list(set(p[0].doc_id for p in pages))
+            # chunk → 所属文档映射（概念-文档关联用）
+            chunk_doc_map = [(p[0].text, p[0].doc_id) for p in pages if p[0].text]
             db.close()
 
             if not chunks:
@@ -298,7 +314,7 @@ class GraphAnalyzer:
             _analyze_status[kb_id]["current_step"] = "概念去重合并"
             _analyze_status[kb_id]["progress"] = 0.5
             saved_concepts = await self.deduplicate_and_save(
-                kb_id, new_concepts, doc_ids
+                kb_id, new_concepts, doc_ids, chunk_doc_map
             )
 
             # Step 4: 关系识别

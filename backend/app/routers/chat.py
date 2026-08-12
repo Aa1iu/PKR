@@ -21,8 +21,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
-from ..core.database import get_db
-from ..models import KnowledgeBase, Document
+from ..core.database import get_db, SessionLocal
+from ..models import KnowledgeBase, Document, ChatMessage
 from ..schemas import (
     ChatRequest, ChatHistoryResponse, ChatMessageResponse,
     ChatSource, SuccessResponse,
@@ -33,38 +33,48 @@ from ..services.rag_service import get_rag_service
 router = APIRouter(tags=["对话"])
 
 
-# ==================== 内存对话历史 ====================
+# ==================== 对话历史（ChatMessage 表持久化） ====================
 
-# {kb_id: [{id, role, content, sources, follow_up_questions, created_at}]}
-_chat_store: dict[str, list[dict]] = {}
 _MAX_HISTORY = 40  # 每个 KB 最多保留 40 条消息（20 轮）
 
 
-def _get_history(kb_id: str | None) -> list[dict]:
-    key = kb_id or "__global__"
-    if key not in _chat_store:
-        _chat_store[key] = []
-    return _chat_store[key]
+def _get_history(kb_id: str | None, db: Session) -> list[dict]:
+    """从 ChatMessage 表读取对话历史"""
+    query = db.query(ChatMessage).order_by(ChatMessage.created_at)
+    if kb_id:
+        query = query.filter(ChatMessage.kb_id == kb_id)
+    else:
+        query = query.filter(ChatMessage.kb_id.is_(None))
+    rows = query.limit(_MAX_HISTORY).all()
+
+    return [
+        {
+            "id": m.id,
+            "role": m.role,
+            "content": m.content,
+            "sources": m.sources or [],
+            "follow_up_questions": m.follow_up_questions or [],
+            "created_at": m.created_at.isoformat() if m.created_at else None,
+        }
+        for m in rows
+    ]
 
 
-def _add_message(kb_id: str | None, role: str, content: str,
+def _add_message(db: Session, kb_id: str | None, role: str, content: str,
                  sources: list[dict] | None = None,
                  follow_ups: list[str] | None = None) -> str:
-    msg_id = get_llm_service().gen_message_id()
-    history = _get_history(kb_id)
-    msg = {
-        "id": msg_id,
-        "role": role,
-        "content": content,
-        "sources": sources or [],
-        "follow_up_questions": follow_ups or [],
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    }
-    history.append(msg)
-    # 保持上限
-    if len(history) > _MAX_HISTORY:
-        _chat_store[kb_id or "__global__"] = history[-_MAX_HISTORY:]
-    return msg_id
+    """写入 ChatMessage 表，返回消息 ID"""
+    msg = ChatMessage(
+        kb_id=kb_id,  # None=全局对话
+        role=role,
+        content=content,
+        sources=sources or [],
+        follow_up_questions=follow_ups or [],
+    )
+    db.add(msg)
+    db.commit()
+    db.refresh(msg)
+    return msg.id
 
 
 # ==================== SSE 工具函数 ====================
@@ -135,11 +145,19 @@ async def chat(body: ChatRequest, db: Session = Depends(get_db)):
             for s in sources
         ]
 
-    # —— 记录用户消息 ——
-    _add_message(body.kb_id, "user", body.question)
+    # —— 记录用户消息（独立 session，避免请求 session 关闭问题） ——
+    _add_message(db, body.kb_id, "user", body.question)
+
+    # 读取历史用于 LLM 上下文（独立 session 读取，防止 SSE 期间 db 关闭）
+    history_db = SessionLocal()
+    try:
+        history = _get_history(body.kb_id, history_db)
+    finally:
+        history_db.close()
 
     # —— SSE 流式 ——
     async def stream():
+        stream_db = SessionLocal()
         try:
             # 1. 先发送 source 事件（检索来源）
             if source_objs:
@@ -155,7 +173,7 @@ async def chat(body: ChatRequest, db: Session = Depends(get_db)):
                 kb_name=kb_name,
                 doc_name=doc_name,
                 doc_page=doc_page,
-                chat_history=_get_history(body.kb_id),
+                chat_history=history,
             ):
                 answer_parts.append(chunk)
                 yield _sse_event("token", content=chunk)
@@ -163,6 +181,7 @@ async def chat(body: ChatRequest, db: Session = Depends(get_db)):
             # 3. 记录 assistant 消息
             full_answer = "".join(answer_parts)
             msg_id = _add_message(
+                stream_db,
                 body.kb_id,
                 "assistant",
                 full_answer,
@@ -175,6 +194,8 @@ async def chat(body: ChatRequest, db: Session = Depends(get_db)):
 
         except Exception as e:
             yield _sse_event("error", content=str(e))
+        finally:
+            stream_db.close()
 
     return StreamingResponse(
         stream(),
@@ -185,8 +206,8 @@ async def chat(body: ChatRequest, db: Session = Depends(get_db)):
 
 # ==================== 对话历史 ====================
 
-def _history_to_response(kb_id: str | None) -> ChatHistoryResponse:
-    history = _get_history(kb_id)
+def _history_to_response(kb_id: str | None, db: Session) -> ChatHistoryResponse:
+    history = _get_history(kb_id, db)
     return ChatHistoryResponse(
         kb_id=kb_id,
         messages=[
@@ -209,13 +230,13 @@ def get_kb_chat_history(kb_id: str, db: Session = Depends(get_db)):
     kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id).first()
     if not kb:
         raise HTTPException(status_code=404, detail="知识库不存在")
-    return _history_to_response(kb_id)
+    return _history_to_response(kb_id, db)
 
 
 @router.get("/api/chat/history", response_model=ChatHistoryResponse)
-def get_global_chat_history():
+def get_global_chat_history(db: Session = Depends(get_db)):
     """获取全局对话历史"""
-    return _history_to_response(None)
+    return _history_to_response(None, db)
 
 
 @router.delete("/api/kbs/{kb_id}/chat/history", response_model=SuccessResponse)
@@ -224,6 +245,7 @@ def clear_kb_chat_history(kb_id: str, db: Session = Depends(get_db)):
     kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id).first()
     if not kb:
         raise HTTPException(status_code=404, detail="知识库不存在")
-    key = kb_id or "__global__"
-    _chat_store.pop(key, None)
+    # 删除 ChatMessage 表中该 KB 的记录
+    db.query(ChatMessage).filter(ChatMessage.kb_id == kb_id).delete()
+    db.commit()
     return SuccessResponse(success=True)

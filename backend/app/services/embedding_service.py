@@ -6,6 +6,11 @@
 import os
 import hashlib
 
+# 必须在 huggingface_hub import 之前设置（huggingface_hub 在 import 时缓存配置）
+# 离线模式：模型已下载到本地缓存，跳过网络检查（HuggingFace 国内不可达）
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+
 
 class EmbeddingService:
     """BGE-M3 本地 Embedding
@@ -27,8 +32,6 @@ class EmbeddingService:
             return  # Mock 模式不需要模型
         from FlagEmbedding import BGEM3FlagModel
         from ..core.config import settings
-        # 优先用 HF 镜像（国内网络），否则用本地缓存
-        os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
         self.model = BGEM3FlagModel(
             settings.EMBEDDING_MODEL,
             use_fp16=settings.EMBEDDING_DEVICE == "cuda",

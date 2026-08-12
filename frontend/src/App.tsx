@@ -36,7 +36,7 @@ function App() {
         <Routes>
           <Route path="/" element={<Zhuye />} />
           <Route path="/zhishiku" element={<KBList />} />
-          <Route path="/wendang/:docId" element={<DocReader />} />
+          <Route path="/wendang/:kbId/:docId" element={<DocReader />} />
           <Route path="/wendang" element={<KBDetail />} />
           <Route path="/tupu" element={<GraphPage />} />
           <Route path="*" element={<NotFound />} />

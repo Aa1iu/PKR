@@ -68,16 +68,18 @@ const STATUS_MAP: Record<string, { color: string; label: string }> = {
 // ========== 组件 ==========
 
 function DocReader() {
-  const { docId } = useParams<{ docId: string }>();
+  const { kbId: kbIdParam, docId } = useParams<{ kbId: string; docId: string }>();
   const location = useLocation();
-  const statePage = (location.state as { page?: number; kbId?: string; docMeta?: Doc } | null)?.page;
-  const stateKbId = (location.state as { kbId?: string } | null)?.kbId;
+  const statePage = (location.state as { page?: number; docMeta?: Doc } | null)?.page;
   const storeKbId = useKBStore((s) => s.currentKbId);
-  const kbId = stateKbId || storeKbId;
+  // URL 参数优先（刷新可恢复），无则回退 store
+  const kbId = kbIdParam || storeKbId;
 
+  // 文档元信息：优先 state（导航传入），刷新后为空则仅显示 docId
   const [docMeta, setDocMeta] = useState<Doc | null>(
     (location.state as { docMeta?: Doc } | null)?.docMeta || null,
   );
+  void setDocMeta; // 保留 setter 占位（后续可接 getDocumentDetail API）
   const [content, setContent] = useState<DocContent | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

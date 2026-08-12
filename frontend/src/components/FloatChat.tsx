@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { Button, Input, Typography } from 'antd';
 import { MessageOutlined, CloseOutlined, MinusOutlined, SendOutlined } from '@ant-design/icons';
 import { useChatStore } from '../stores/chatStore';
+import { useKBStore } from '../stores/kbStore';
 import { useChatStream } from '../hooks/useChatStream';
 import MarkdownRenderer from './MarkdownRenderer';
 import SourceCitation from './SourceCitation';
@@ -32,7 +33,9 @@ function FloatChat() {
   const inputValue = useChatStore((s) => s.inputValue);
   const sending = useChatStore((s) => s.sending);
   const setInputValue = useChatStore((s) => s.setInputValue);
-  const handleStream = useChatStream();
+  // 当前知识库上下文：有则基于 KB 回答，无则全局对话
+  const currentKbId = useKBStore((s) => s.currentKbId);
+  const handleStream = useChatStream(currentKbId);
 
   // ---- 窗口位置 ----
   const [pos, setPos] = useState(() => ({
