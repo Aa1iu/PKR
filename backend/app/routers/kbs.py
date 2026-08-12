@@ -11,6 +11,7 @@
 """
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 
 from ..core.database import get_db
@@ -100,19 +101,14 @@ def delete_kb(kb_id: str, db: Session = Depends(get_db)):
 
 # ===== Phase 3 =====
 
-@router.get("/{kb_id}/export", response_model=KBExportResponse)
+@router.get("/{kb_id}/export")
 def export_kb(kb_id: str, db: Session = Depends(get_db)):
-    """导出知识库结构为 JSON（Phase 3 完整实现）"""
+    """导出知识库结构为 JSON — 未实现（Phase 5 待做）"""
     kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id).first()
     if not kb:
         raise HTTPException(status_code=404, detail="知识库不存在")
-    # TODO: Phase 3 — 构建完整的 KBExportResponse（概念+关系+文档）
-    return KBExportResponse(
-        kb=_kb_to_response(kb, doc_count=0),
-        concepts=[],
-        relations=[],
-        documents=[],
-    )
+    # 诚实返回 501，避免前端误以为导出成功
+    return PlainTextResponse("Not Implemented", status_code=501)
 
 
 # ===== Phase 1 =====
@@ -173,9 +169,9 @@ def search_kb(
 
 @router.post("/{kb_id}/reindex")
 def reindex_kb(kb_id: str, db: Session = Depends(get_db)):
-    """重建向量索引（Phase 2 完整实现）"""
+    """重建向量索引 — 未实现（Phase 5 待做）"""
     kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id).first()
     if not kb:
         raise HTTPException(status_code=404, detail="知识库不存在")
-    # TODO: Phase 2 — 异步执行 分块→Embedding→ChromaDB 重建
-    return ReindexResponse(kb_id=kb_id, total_chunks=0, status="completed")
+    # 诚实返回 501，避免前端误以为重建完成
+    return PlainTextResponse("Not Implemented", status_code=501)

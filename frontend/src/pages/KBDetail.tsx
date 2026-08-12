@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Card, Button, Upload, Table, Tag, Space, Typography, message, Spin, Result } from 'antd';
+import { Card, Button, Upload, Table, Tag, Space, Typography, message, Spin, Result, Popconfirm } from 'antd';
 import { ArrowLeftOutlined, InboxOutlined, DeleteOutlined, EyeOutlined, ApartmentOutlined, ReloadOutlined } from '@ant-design/icons';
 import type { Doc } from '../types';
 import type { UploadProps } from 'antd';
@@ -197,14 +197,18 @@ function KBDetail() {
           >
             阅读
           </Button>
-          <Button
-            type="link"
-            danger
-            icon={<DeleteOutlined />}
-            onClick={() => handleDelete(record.doc_id, record.filename)}
+          <Popconfirm
+            title={`确认删除「${record.filename}」？`}
+            description="删除后文档及向量数据将不可恢复"
+            okText="删除"
+            okButtonProps={{ danger: true }}
+            cancelText="取消"
+            onConfirm={() => handleDelete(record.doc_id, record.filename)}
           >
-            删除
-          </Button>
+            <Button type="link" danger icon={<DeleteOutlined />}>
+              删除
+            </Button>
+          </Popconfirm>
         </Space>
       ),
     },

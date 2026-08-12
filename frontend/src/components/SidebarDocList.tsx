@@ -54,7 +54,7 @@ function SidebarDocList({ docs, sidebarWidth, onDocDrop }: Props) {
     if (files.length === 0) return;
 
     if (!onDocDrop) {
-      message.info('文档上传功能将在 Phase 2 接入');
+      message.info('请先在左侧选择一个知识库后再上传文档');
       return;
     }
 

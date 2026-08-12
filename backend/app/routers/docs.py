@@ -102,8 +102,10 @@ def _process_document_background(doc_id: str, kb_id: str, file_path: str, filena
             print(f"[WARN] 自动触发图谱分析失败（不影响文档入库）: {e}")
 
     except Exception as e:
-        # 出错时标记文档状态
+        # 出错时标记文档状态（rollback 丢弃未提交的 pages，
+        # 避免与并发删除操作产生 FK 冲突）
         try:
+            db.rollback()
             doc = db.query(Document).filter(Document.id == doc_id).first()
             if doc:
                 doc.status = "error"
@@ -243,9 +245,50 @@ def rename_doc(kb_id: str, doc_id: str, body: DocRenameRequest, db: Session = De
 
 # ===== 删除 =====
 
+def _cleanup_graph_on_doc_delete(db: Session, doc_id: str):
+    """删除文档后同步清理图谱数据
+
+    规则（多文档共享概念的完整语义）：
+    - 概念仍被其他文档引用 → 保留概念，仅删除该文档的 ConceptDocRef
+    - 概念无任何剩余引用 → 删除概念 + 所有关联边（source/target 任一被删则边删）
+    """
+    from sqlalchemy import or_
+    from ..models import Concept, ConceptDocRef, Relation
+
+    # 1. 找到引用该文档的概念
+    concept_ids = [
+        ref.concept_id
+        for ref in db.query(ConceptDocRef).filter(ConceptDocRef.doc_id == doc_id).all()
+    ]
+    if not concept_ids:
+        return
+
+    # 2. 删除该文档的所有 ConceptDocRef
+    db.query(ConceptDocRef).filter(ConceptDocRef.doc_id == doc_id).delete()
+
+    # 3. 对每个受影响概念检查剩余引用
+    for cid in concept_ids:
+        remaining = (
+            db.query(ConceptDocRef)
+            .filter(ConceptDocRef.concept_id == cid)
+            .count()
+        )
+        if remaining == 0:
+            # 无剩余引用 → 删除概念及其所有关联边
+            db.query(Relation).filter(
+                or_(
+                    Relation.source_concept_id == cid,
+                    Relation.target_concept_id == cid,
+                )
+            ).delete()
+            concept = db.query(Concept).filter(Concept.id == cid).first()
+            if concept:
+                db.delete(concept)
+
+
 @router.delete("/{doc_id}", response_model=SuccessResponse)
 def delete_doc(kb_id: str, doc_id: str, db: Session = Depends(get_db)):
-    """删除文档（同时删除源文件）"""
+    """删除文档（同时删除源文件 + 同步清理图谱）"""
     doc = db.query(Document).filter(Document.id == doc_id, Document.kb_id == kb_id).first()
     if not doc:
         raise HTTPException(status_code=404, detail="文档不存在")
@@ -258,6 +301,13 @@ def delete_doc(kb_id: str, doc_id: str, db: Session = Depends(get_db)):
     if os.path.exists(doc.file_path):
         os.remove(doc.file_path)
 
+    # 图谱同步清理（概念无引用则删，有引用则保留）
+    _cleanup_graph_on_doc_delete(db, doc_id)
+
+    # 显式删除 DocumentPage（不依赖 ORM cascade，
+    # 避免后台线程 flush 未提交时 cascade 失效导致 FK 冲突）
+    db.query(DocumentPage).filter(DocumentPage.doc_id == doc_id).delete()
+
     db.delete(doc)
     db.commit()
     return SuccessResponse(success=True)
@@ -269,20 +319,29 @@ def delete_doc(kb_id: str, doc_id: str, db: Session = Depends(get_db)):
 def get_doc_content(
     kb_id: str,
     doc_id: str,
-    page: int = Query(default=1, ge=1),
+    page: int = Query(default=0, ge=0, description="0=全部页，>0=单页"),
     db: Session = Depends(get_db),
 ):
-    """获取文档内容（分页）"""
+    """获取文档内容（分页）
+
+    page=0（默认）：返回全部页（兼容前端现有调用）
+    page>0：返回指定单页
+    """
     doc = db.query(Document).filter(Document.id == doc_id, Document.kb_id == kb_id).first()
     if not doc:
         raise HTTPException(status_code=404, detail="文档不存在")
 
-    pages = (
+    query = (
         db.query(DocumentPage)
         .filter(DocumentPage.doc_id == doc_id)
         .order_by(DocumentPage.page_num)
-        .all()
     )
+
+    if page > 0:
+        # 单页模式：返回该页（若页码超出范围返回空 pages）
+        pages = query.filter(DocumentPage.page_num == page).all()
+    else:
+        pages = query.all()
 
     return DocContentResponse(
         pages=[DocPageResponse(page_num=p.page_num, text=p.text) for p in pages],
@@ -320,6 +379,12 @@ def get_doc_file(
 
     ext = os.path.splitext(doc.file_path)[1].lower()
     media_type = MIME_TYPES.get(ext, "application/octet-stream")
+
+    # 浏览器原生可显示的类型（pdf 等）：不传 filename → 无 attachment 头 → 内嵌显示
+    # 未知类型（octet-stream）：传 filename → 触发下载（合理行为）
+    inline_types = {".pdf", ".md", ".txt"}
+    if ext in inline_types:
+        return FileResponse(doc.file_path, media_type=media_type)
 
     return FileResponse(
         doc.file_path,

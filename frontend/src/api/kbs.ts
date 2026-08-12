@@ -21,3 +21,11 @@ export async function createKB(body: { name: string; description?: string; tags?
 export async function deleteKB(kbId: string): Promise<{ success: boolean }> {
   return request<{ success: boolean }>(`/kbs/${kbId}`, { method: 'DELETE' });
 }
+
+/** PUT /api/kbs/{kb_id} — 更新知识库（name/description/tags 均可选） */
+export async function updateKB(
+  kbId: string,
+  body: { name?: string; description?: string; tags?: string[] },
+): Promise<KB> {
+  return request<KB>(`/kbs/${kbId}`, { method: 'PUT', body: JSON.stringify(body) });
+}

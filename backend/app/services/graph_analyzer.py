@@ -151,6 +151,7 @@ class GraphAnalyzer:
         all_embs = emb_service.embed([c.name for c in existing]) if existing else []
 
         saved: list[Concept] = []
+        new_saved: list[Concept] = []  # 仅新插入的概念（为其创建 doc_refs）
 
         for nc in new_concepts:
             # 计算与"所有已确认概念"（已有 + 本批已处理）的相似度
@@ -174,12 +175,13 @@ class GraphAnalyzer:
                 db.add(concept)
                 db.flush()  # 获取 ID
                 saved.append(concept)
+                new_saved.append(concept)
                 # 新概念加入比较池（含向量），后续概念与之比较
                 existing.append(concept)
                 all_embs.append(new_emb)
 
-        # 关联 doc_refs：按概念名在 chunk 中的出现位置关联真实文档
-        for concept in saved:
+        # 关联 doc_refs：仅对新插入的概念创建，避免重复分析时旧概念 refs 翻倍
+        for concept in new_saved:
             matched_docs: set[str] = set()
             if chunk_doc_map:
                 # 概念名可能带括号/空格，取核心词匹配
@@ -203,7 +205,6 @@ class GraphAnalyzer:
                 db.add(ref)
 
         db.commit()
-        concept_ids = [c.id for c in saved]
         db.close()
         return saved
 
@@ -212,14 +213,28 @@ class GraphAnalyzer:
         kb_id: str,
         concepts: list[Concept],
     ) -> list[dict]:
-        """LLM 关系识别"""
+        """LLM 关系识别
+
+        concepts 参数仅用于概念数量判断；实际数据从 DB 重新查询
+        （传入的 ORM 对象可能已 detached，直接访问属性会抛异常）。
+        """
         if len(concepts) < 2:
+            return []
+
+        # 从 DB 重新查询概念（session 独立，避免 DetachedInstanceError）
+        db = SessionLocal()
+        db_concepts = (
+            db.query(Concept).filter(Concept.kb_id == kb_id).all()
+        )
+        db.close()
+
+        if len(db_concepts) < 2:
             return []
 
         # 概念列表文本
         concept_list = "\n".join(
             f"- {c.name}（{c.concept_type}）：{c.definition or ''}"
-            for c in concepts[:30]
+            for c in db_concepts[:30]
         )
 
         llm = get_llm_service()
@@ -240,10 +255,16 @@ class GraphAnalyzer:
             )
             relations = self._parse_json(result_text)
 
-        # 写入 Relation 表
+        # 写入 Relation 表（写入前查重，避免重复分析时关系翻倍）
         db = SessionLocal()
-        name_to_id = {c.name: c.id for c in concepts}
+        name_to_id = {c.name: c.id for c in db_concepts}
         saved_count = 0
+
+        # 已存在的边集合：{(source_id, target_id, relation_type)}
+        existing_edges = {
+            (rel.source_concept_id, rel.target_concept_id, rel.relation_type)
+            for rel in db.query(Relation).filter(Relation.kb_id == kb_id).all()
+        }
 
         for r in relations:
             if not isinstance(r, dict):
@@ -254,6 +275,9 @@ class GraphAnalyzer:
 
             if not source_id or not target_id or rel_type not in RELATION_TYPES:
                 continue
+            # 跳过已存在的边
+            if (source_id, target_id, rel_type) in existing_edges:
+                continue
 
             relation = Relation(
                 kb_id=kb_id,
@@ -263,6 +287,7 @@ class GraphAnalyzer:
                 description=r.get("description", "")[:200],
             )
             db.add(relation)
+            existing_edges.add((source_id, target_id, rel_type))
             saved_count += 1
 
         db.commit()

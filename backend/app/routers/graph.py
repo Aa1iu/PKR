@@ -8,6 +8,7 @@
 """
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 
 from ..core.database import get_db
@@ -75,9 +76,9 @@ def get_graph(kb_id: str, db: Session = Depends(get_db)):
 
 # ==================== 概念位置（Phase 3 占位） ====================
 
-@router.get("/concepts/{concept_id}/positions", response_model=ConceptPositionResponse)
+@router.get("/concepts/{concept_id}/positions")
 def get_concept_positions(kb_id: str, concept_id: str, db: Session = Depends(get_db)):
-    """获取概念在文档中的出现位置 — Phase 3"""
+    """获取概念在文档中的出现位置 — 未实现（Phase 5 待做）"""
     kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id).first()
     if not kb:
         raise HTTPException(status_code=404, detail="知识库不存在")
@@ -86,11 +87,8 @@ def get_concept_positions(kb_id: str, concept_id: str, db: Session = Depends(get
     ).first()
     if not concept:
         raise HTTPException(status_code=404, detail="概念不存在")
-    return ConceptPositionResponse(
-        concept_id=concept_id,
-        concept_name=concept.name,
-        positions=[],
-    )
+    # 诚实返回 501，避免前端误以为有位置数据
+    return PlainTextResponse("Not Implemented", status_code=501)
 
 
 # ==================== 触发分析 ====================

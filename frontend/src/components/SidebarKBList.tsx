@@ -1,6 +1,6 @@
 import { useNavigate } from 'react-router-dom';
 import { Button, List, Tag, Space, Typography } from 'antd';
-import { BookOutlined, AppstoreOutlined } from '@ant-design/icons';
+import { BookOutlined, AppstoreOutlined, FolderOpenOutlined } from '@ant-design/icons';
 import type { KB } from '../types';
 import { useKBStore } from '../stores/kbStore';
 
@@ -36,10 +36,22 @@ function SidebarKBList({ kbs, sidebarWidth }: Props) {
           return (
             <List.Item
               style={{ cursor: 'pointer' }}
-              onClick={() => {
-                setCurrentKbId(kb.id);
-                navigate(`/wendang`);
-              }}
+              onClick={() => setCurrentKbId(kb.id)}
+              actions={[
+                <Button
+                  key="view"
+                  type="link"
+                  size="small"
+                  icon={<FolderOpenOutlined />}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setCurrentKbId(kb.id);
+                    navigate('/wendang');
+                  }}
+                >
+                  查看文档
+                </Button>,
+              ]}
             >
               <List.Item.Meta
                 title={kb.name}
@@ -52,7 +64,7 @@ function SidebarKBList({ kbs, sidebarWidth }: Props) {
                           {kb.tags.map((tag) => <Tag key={tag}>{tag}</Tag>)}
                         </Space>
                       )}
-                      {showCount && <Text type="secondary">{kb.doc_count} 篇文档</Text>}
+                      {showCount && <Text type="secondary">{kb.doc_count ?? 0} 篇文档</Text>}
                     </Space>
                   ) : undefined
                 }

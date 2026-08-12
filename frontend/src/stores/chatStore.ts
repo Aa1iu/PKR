@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { persist, createJSONStorage } from 'zustand/middleware';
 import type { ChatMessage, Conversation } from '../types';
 
 interface ChatState {
@@ -38,8 +39,13 @@ interface ChatState {
 
 /**
  * 全局对话状态 — 多会话管理 + ChatPanel / FloatChat 共享
+ *
+ * 使用 zustand persist 持久化到 localStorage：
+ * 刷新页面后会话列表和消息不丢失。
  */
-export const useChatStore = create<ChatState>((set, get) => ({
+export const useChatStore = create<ChatState>()(
+  persist(
+    (set, get) => ({
   conversations: [],
   currentConversationId: null,
   messages: [],
@@ -181,4 +187,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
       ),
     });
   },
-}));
+    }),
+    {
+      name: 'pkr-chat-store',
+      storage: createJSONStorage(() => localStorage),
+      // 只持久化会话数据（inputValue/sending 等瞬时状态不持久化）
+      partialize: (s) => ({
+        conversations: s.conversations,
+        currentConversationId: s.currentConversationId,
+        messages: s.messages,
+      }),
+    },
+  ),
+);

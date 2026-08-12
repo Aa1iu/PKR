@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { useParams, useLocation } from 'react-router-dom';
+import { useParams, useLocation, useNavigate } from 'react-router-dom';
 import { Button, Card, Typography, Tag, Space, InputNumber, Spin, Result } from 'antd';
 import {
   ArrowLeftOutlined,
@@ -69,6 +69,7 @@ const STATUS_MAP: Record<string, { color: string; label: string }> = {
 
 function DocReader() {
   const { kbId: kbIdParam, docId } = useParams<{ kbId: string; docId: string }>();
+  const navigate = useNavigate();
   const location = useLocation();
   const statePage = (location.state as { page?: number; docMeta?: Doc } | null)?.page;
   const storeKbId = useKBStore((s) => s.currentKbId);
@@ -83,6 +84,7 @@ function DocReader() {
   const [content, setContent] = useState<DocContent | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [retryKey, setRetryKey] = useState(0);
   const [currentPage, setCurrentPage] = useState(() =>
     statePage && statePage >= 1 ? statePage : 1,
   );
@@ -118,7 +120,7 @@ function DocReader() {
 
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [docId, kbId]);
+  }, [docId, kbId, retryKey]);
 
   // 换页滚回顶部
   useEffect(() => {
@@ -169,8 +171,8 @@ function DocReader() {
           subTitle={error || '未找到文档内容'}
           extra={
             <Space>
-              <Button icon={<ArrowLeftOutlined />} onClick={() => window.history.back()}>返回</Button>
-              <Button type="primary" icon={<ReloadOutlined />} onClick={() => window.location.reload()}>重试</Button>
+              <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/wendang')}>返回文档列表</Button>
+              <Button type="primary" icon={<ReloadOutlined />} onClick={() => { setError(null); setRetryKey(k => k + 1); }}>重试</Button>
             </Space>
           }
         />
@@ -186,7 +188,7 @@ function DocReader() {
       {/* 顶部信息栏 */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0, marginBottom: 16 }}>
         <Space align="center">
-          <Button type="text" icon={<ArrowLeftOutlined />} onClick={() => window.history.back()} />
+          <Button type="text" icon={<ArrowLeftOutlined />} onClick={() => navigate('/wendang')} />
           <FileTextOutlined style={{ fontSize: 20, color: 'var(--color-primary)' }} />
           <Title level={4} style={{ margin: 0 }}>{displayName}</Title>
           <Tag>{inferredType.toUpperCase()}</Tag>

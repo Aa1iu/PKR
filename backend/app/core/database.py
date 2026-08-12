@@ -7,16 +7,20 @@ from .config import settings
 
 engine = create_engine(
     settings.SQLITE_URL,
-    connect_args={"check_same_thread": False},  # SQLite 需要
+    connect_args={
+        "check_same_thread": False,  # SQLite 需要
+        "timeout": 30,  # 等待锁的最长时间（秒），避免后台任务并发写时 database is locked
+    },
     echo=settings.DEBUG,
 )
 
 
 @event.listens_for(engine, "connect")
 def _set_sqlite_pragma(dbapi_connection, connection_record):
-    """启用 SQLite 外键约束（默认关闭）"""
+    """启用 SQLite 外键约束 + WAL 模式（读写并发更好）"""
     cursor = dbapi_connection.cursor()
     cursor.execute("PRAGMA foreign_keys=ON")
+    cursor.execute("PRAGMA journal_mode=WAL")
     cursor.close()
 
 

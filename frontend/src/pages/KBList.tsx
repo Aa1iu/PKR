@@ -1,10 +1,10 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Table, Button, Card, Tag, Space, Spin, Result, Modal, Form, Input, Select, message, Popconfirm } from 'antd';
-import { PlusOutlined, ArrowLeftOutlined, ReloadOutlined, DeleteOutlined } from '@ant-design/icons';
+import { PlusOutlined, ArrowLeftOutlined, ReloadOutlined, DeleteOutlined, EditOutlined } from '@ant-design/icons';
 import type { KB } from '../types';
 import { useKBStore } from '../stores/kbStore';
-import { getKBs, createKB, deleteKB } from '../api';
+import { getKBs, createKB, deleteKB, updateKB } from '../api';
 import EmptyState from '../components/EmptyState';
 
 function KBList() {
@@ -19,6 +19,7 @@ function KBList() {
   const [error, setError] = useState<string | null>(null);
   const [retryKey, setRetryKey] = useState(0);
   const [modalVisible, setModalVisible] = useState(false);
+  const [editingKb, setEditingKb] = useState<KB | null>(null); // null=新建，非null=编辑
   const [submitting, setSubmitting] = useState(false);
   const [form] = Form.useForm();
 
@@ -54,29 +55,55 @@ function KBList() {
     setRetryKey((k) => k + 1);
   };
 
-  // 新建知识库
+  // 新建 / 编辑知识库（editingKb 非空时为编辑）
   const handleCreate = async () => {
     try {
       const values = await form.validateFields();
       setSubmitting(true);
-      const kb = await createKB({
-        name: values.name,
-        description: values.description,
-        tags: values.tags || [],
-      });
-      // 更新本地状态 + Store
-      setLocalKbs((prev) => [kb, ...prev]);
-      setKBs([kb, ...storeKbs]);
+
+      if (editingKb) {
+        // 编辑模式
+        const updated = await updateKB(editingKb.id, {
+          name: values.name,
+          description: values.description,
+          tags: values.tags || [],
+        });
+        setLocalKbs((prev) => prev.map((kb) => (kb.id === updated.id ? updated : kb)));
+        setKBs(useKBStore.getState().kbs.map((kb) => (kb.id === updated.id ? updated : kb)));
+        message.success(`知识库「${updated.name}」已更新`);
+      } else {
+        // 新建模式
+        const kb = await createKB({
+          name: values.name,
+          description: values.description,
+          tags: values.tags || [],
+        });
+        setLocalKbs((prev) => [kb, ...prev]);
+        setKBs(useKBStore.getState().kbs.concat([kb]));
+        message.success(`知识库「${kb.name}」创建成功`);
+      }
+
       form.resetFields();
+      setEditingKb(null);
       setModalVisible(false);
-      message.success(`知识库「${kb.name}」创建成功`);
     } catch (err: unknown) {
       if (err && typeof err === 'object' && 'errorFields' in err) return; // 表单校验失败，不提示
-      const msg = err instanceof Error ? err.message : '创建失败';
+      const msg = err instanceof Error ? err.message : (editingKb ? '更新失败' : '创建失败');
       message.error(msg);
     } finally {
       setSubmitting(false);
     }
+  };
+
+  // 打开编辑弹窗（预填当前值）
+  const openEdit = (kb: KB) => {
+    setEditingKb(kb);
+    form.setFieldsValue({
+      name: kb.name,
+      description: kb.description,
+      tags: kb.tags || [],
+    });
+    setModalVisible(true);
   };
 
   // 删除知识库
@@ -124,6 +151,7 @@ function KBList() {
       title: '创建时间',
       dataIndex: 'created_at',
       key: 'created_at',
+      render: (v: string) => v ? new Date(v).toLocaleString('zh-CN') : '-',
     },
     {
       title: '操作',
@@ -138,6 +166,9 @@ function KBList() {
             }}
           >
             查看
+          </Button>
+          <Button type="link" icon={<EditOutlined />} onClick={() => openEdit(record)}>
+            编辑
           </Button>
           <Popconfirm
             title="确认删除"
@@ -206,15 +237,16 @@ function KBList() {
       </Card>
 
       <Modal
-        title="新建知识库"
+        title={editingKb ? `编辑知识库「${editingKb.name}」` : '新建知识库'}
         open={modalVisible}
         onOk={handleCreate}
         onCancel={() => {
           setModalVisible(false);
+          setEditingKb(null);
           form.resetFields();
         }}
         confirmLoading={submitting}
-        okText="创建"
+        okText={editingKb ? '保存' : '创建'}
         cancelText="取消"
         destroyOnClose
       >
