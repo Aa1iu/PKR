@@ -149,14 +149,6 @@ function Zhuye() {
         minWidth: 0,
         minHeight: '100vh',
       }}>
-        {/* 顶部欢迎区 */}
-        <div style={{ padding: '20px 0 12px' }}>
-          <Title level={2}>欢迎使用 PK Repository</Title>
-          <Text type="secondary">个人知识库管理系统 — 文档导入 → AI 构建图谱 → 智能问答</Text>
-        </div>
-
-        <div style={{ borderTop: '1px solid var(--color-border)' }} />
-
         <ChatPanel kbId={currentKbId} />
       </div>
 
