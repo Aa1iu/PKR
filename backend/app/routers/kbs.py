@@ -21,6 +21,7 @@ from ..schemas import (
     KBCreate, KBUpdate, KBResponse, KBListResponse,
     KBExportResponse, FullTextSearchResponse, FullTextSearchResult,
     ReindexResponse, SuccessResponse, tags_to_list, tags_to_str,
+    ConceptResponse, RelationResponse, DocResponse,
 )
 
 router = APIRouter(prefix="/api/kbs", tags=["知识库"])
@@ -101,14 +102,64 @@ def delete_kb(kb_id: str, db: Session = Depends(get_db)):
 
 # ===== Phase 3 =====
 
-@router.get("/{kb_id}/export")
+@router.get("/{kb_id}/export", response_model=KBExportResponse)
 def export_kb(kb_id: str, db: Session = Depends(get_db)):
-    """导出知识库结构为 JSON — 未实现（Phase 5 待做）"""
+    """导出知识库结构为 JSON（概念 + 关系 + 文档）"""
     kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id).first()
     if not kb:
         raise HTTPException(status_code=404, detail="知识库不存在")
-    # 诚实返回 501，避免前端误以为导出成功
-    return PlainTextResponse("Not Implemented", status_code=501)
+
+    from ..models import Concept, Relation, Document
+
+    # 文档列表
+    documents = db.query(Document).filter(Document.kb_id == kb_id).all()
+    doc_responses = [
+        DocResponse(
+            doc_id=d.id, filename=d.filename, type=d.file_type,
+            pages=d.total_pages, size=d.file_size, status=d.status,
+            created_at=d.created_at,
+        )
+        for d in documents
+    ]
+
+    # 概念列表（含 degree）
+    concepts = db.query(Concept).filter(Concept.kb_id == kb_id).all()
+    relations = db.query(Relation).filter(Relation.kb_id == kb_id).all()
+    degree_map: dict[str, int] = {c.id: 0 for c in concepts}
+    for r in relations:
+        if r.source_concept_id in degree_map:
+            degree_map[r.source_concept_id] += 1
+        if r.target_concept_id in degree_map:
+            degree_map[r.target_concept_id] += 1
+
+    concept_responses = [
+        ConceptResponse(
+            id=c.id, name=c.name, definition=c.definition or "",
+            concept_type=c.concept_type or "其他", kb_id=c.kb_id,
+            degree=degree_map.get(c.id, 0),
+            doc_refs=[ref.doc_id for ref in c.doc_refs] if c.doc_refs else [],
+            created_at=c.created_at,
+        )
+        for c in concepts
+    ]
+
+    # 关系列表
+    relation_responses = [
+        RelationResponse(
+            id=r.id, source_id=r.source_concept_id, target_id=r.target_concept_id,
+            relation_type=r.relation_type, description=r.description or "",
+            kb_id=r.kb_id, created_at=r.created_at,
+        )
+        for r in relations
+    ]
+
+    doc_count = len(documents)
+    return KBExportResponse(
+        kb=_kb_to_response(kb, doc_count),
+        concepts=concept_responses,
+        relations=relation_responses,
+        documents=doc_responses,
+    )
 
 
 # ===== Phase 1 =====

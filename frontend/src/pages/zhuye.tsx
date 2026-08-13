@@ -136,7 +136,7 @@ function Zhuye() {
   }, []);
 
   return (
-    <div style={{ display: 'flex', gap: 0, minHeight: '100vh' }}>
+    <div style={{ display: 'flex', gap: 0, height: '100vh', overflow: 'hidden' }}>
 
       {/* ===== 左侧：对话历史侧边栏 ===== */}
       <ChatHistorySidebar />
@@ -147,7 +147,8 @@ function Zhuye() {
         display: 'flex',
         flexDirection: 'column',
         minWidth: 0,
-        minHeight: '100vh',
+        height: '100vh',
+        overflow: 'hidden',
       }}>
         <ChatPanel kbId={currentKbId} />
       </div>

@@ -178,6 +178,37 @@ class LLMService:
         response = await self.client.chat.completions.create(**kwargs)
         return response.choices[0].message.content or ""
 
+    async def generate_followups(self, question: str, answer: str) -> list[str]:
+        """基于问题与回答生成推荐追问（最多 2 个）"""
+        prompt = (
+            "基于用户的提问和 AI 的回答，生成最多 2 个用户可能继续追问的问题。\n"
+            "要求：\n"
+            "1. 问题必须与当前话题相关，能引导深入探索\n"
+            "2. 简洁明确，每个不超过 30 字\n"
+            "3. 严格返回 JSON 数组格式，如 [\"追问1\", \"追问2\"]\n\n"
+            f"用户提问：{question[:200]}\n\n"
+            f"AI 回答：{answer[:500]}"
+        )
+        messages = [
+            {"role": "system", "content": "你是对话助手，负责生成推荐追问。请严格按JSON格式输出。"},
+            {"role": "user", "content": prompt},
+        ]
+
+        try:
+            result_text = await self.chat_complete(
+                messages, temperature=0.5, max_tokens=200, json_mode=True
+            )
+            import json as _json
+            data = _json.loads(result_text.strip())
+            # 兼容 {"questions": [...]} 或直接数组
+            if isinstance(data, dict):
+                data = data.get("questions", data.get("follow_up_questions", []))
+            if isinstance(data, list):
+                return [str(q)[:50] for q in data[:2] if str(q).strip()]
+        except Exception:
+            pass
+        return []
+
     # ==================== 工具 ====================
 
     @staticmethod

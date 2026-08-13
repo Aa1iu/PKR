@@ -29,6 +29,18 @@ export async function deleteDocument(
   return request(`/kbs/${kbId}/docs/${docId}`, { method: 'DELETE' });
 }
 
+/** PUT /api/kbs/{kb_id}/docs/{doc_id} — 重命名文档 */
+export async function renameDocument(
+  kbId: string,
+  docId: string,
+  filename: string,
+): Promise<Doc> {
+  return request<Doc>(`/kbs/${kbId}/docs/${docId}`, {
+    method: 'PUT',
+    body: JSON.stringify({ filename }),
+  });
+}
+
 /** 文档内容分页 */
 export interface DocContent {
   pages: { page_num: number; text: string }[];

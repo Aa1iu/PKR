@@ -8,7 +8,6 @@
 """
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
-from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 
 from ..core.database import get_db
@@ -74,11 +73,15 @@ def get_graph(kb_id: str, db: Session = Depends(get_db)):
     return GraphResponse(nodes=nodes, edges=edges)
 
 
-# ==================== 概念位置（Phase 3 占位） ====================
+# ==================== 概念位置 ====================
 
-@router.get("/concepts/{concept_id}/positions")
+@router.get("/concepts/{concept_id}/positions", response_model=ConceptPositionResponse)
 def get_concept_positions(kb_id: str, concept_id: str, db: Session = Depends(get_db)):
-    """获取概念在文档中的出现位置 — 未实现（Phase 5 待做）"""
+    """获取概念在文档中的出现位置
+
+    实时计算：在关联文档的 DocumentPage 文本中搜索概念名，
+    返回 {doc_id, doc_name, page_num, paragraph}。
+    """
     kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id).first()
     if not kb:
         raise HTTPException(status_code=404, detail="知识库不存在")
@@ -87,8 +90,53 @@ def get_concept_positions(kb_id: str, concept_id: str, db: Session = Depends(get
     ).first()
     if not concept:
         raise HTTPException(status_code=404, detail="概念不存在")
-    # 诚实返回 501，避免前端误以为有位置数据
-    return PlainTextResponse("Not Implemented", status_code=501)
+
+    # 概念名核心词（去括号后缀）
+    name_core = concept.name.split("（")[0].split("(")[0].strip()
+    if len(name_core) < 2:
+        return ConceptPositionResponse(concept_id=concept_id, concept_name=concept.name, positions=[])
+
+    # 关联文档
+    from ..models import ConceptDocRef, DocumentPage, Document
+    ref_doc_ids = [
+        r.doc_id
+        for r in db.query(ConceptDocRef).filter(ConceptDocRef.concept_id == concept_id).all()
+    ]
+    if not ref_doc_ids:
+        return ConceptPositionResponse(concept_id=concept_id, concept_name=concept.name, positions=[])
+
+    # 实时搜索每篇文档的页面文本
+    from ..schemas import ConceptPosition
+    positions = []
+    docs = db.query(Document).filter(Document.id.in_(ref_doc_ids)).all()
+    doc_name_map = {d.id: d.filename for d in docs}
+
+    for doc_id in ref_doc_ids:
+        pages = (
+            db.query(DocumentPage)
+            .filter(DocumentPage.doc_id == doc_id)
+            .order_by(DocumentPage.page_num)
+            .all()
+        )
+        for page in pages:
+            if not page.text:
+                continue
+            lines = page.text.split("\n")
+            for idx, line in enumerate(lines):
+                if name_core in line:
+                    positions.append(ConceptPosition(
+                        doc_id=doc_id,
+                        doc_name=doc_name_map.get(doc_id, ""),
+                        page_num=page.page_num,
+                        paragraph=idx + 1,
+                    ))
+                    break  # 每页只记首个出现段落
+
+    return ConceptPositionResponse(
+        concept_id=concept_id,
+        concept_name=concept.name,
+        positions=positions,
+    )
 
 
 # ==================== 触发分析 ====================

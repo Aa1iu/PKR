@@ -6,7 +6,8 @@
  */
 
 export { ApiError } from './client';
-export { getKBs, createKB, deleteKB, updateKB } from './kbs';
-export { getDocuments, uploadDocument, deleteDocument, getDocumentContent, getDocumentFileUrl, getPageImageUrl } from './documents';
+export { getKBs, createKB, deleteKB, updateKB, searchKb } from './kbs';
+export type { FullTextSearchResult } from './kbs';
+export { getDocuments, uploadDocument, deleteDocument, renameDocument, getDocumentContent, getDocumentFileUrl, getPageImageUrl } from './documents';
 export type { DocContent } from './documents';
-export { getGraph } from './graph';
+export { getGraph, triggerAnalyze, getAnalyzeStatus } from './graph';

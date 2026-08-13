@@ -188,9 +188,18 @@ async def chat(body: ChatRequest, db: Session = Depends(get_db)):
                 sources=[s.model_dump() for s in source_objs] if source_objs else [],
             )
 
-            # 4. done 事件
+            # 4. 生成推荐追问（失败降级为空数组）
+            follow_ups: list[str] = []
+            try:
+                follow_ups = await llm_service.generate_followups(
+                    body.question, full_answer
+                )
+            except Exception:
+                follow_ups = []
+
+            # 5. done 事件
             yield _sse_event("done", message_id=msg_id,
-                             follow_up_questions=[])
+                             follow_up_questions=follow_ups)
 
         except Exception as e:
             yield _sse_event("error", content=str(e))

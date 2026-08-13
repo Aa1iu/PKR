@@ -29,3 +29,24 @@ export async function updateKB(
 ): Promise<KB> {
   return request<KB>(`/kbs/${kbId}`, { method: 'PUT', body: JSON.stringify(body) });
 }
+
+/** 全文搜索结果 */
+export interface FullTextSearchResult {
+  doc_id: string;
+  doc_name: string;
+  page_num: number;
+  snippet: string;
+}
+
+/** GET /api/kbs/{kb_id}/search?q= — 知识库内全文搜索 */
+export async function searchKb(
+  kbId: string,
+  q: string,
+  page: number = 1,
+  page_size: number = 20,
+): Promise<FullTextSearchResult[]> {
+  const data = await request<{ results: FullTextSearchResult[] }>(
+    `/kbs/${kbId}/search?q=${encodeURIComponent(q)}&page=${page}&page_size=${page_size}`,
+  );
+  return data.results;
+}

@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Card, Button, Upload, Table, Tag, Space, Typography, message, Spin, Result, Popconfirm } from 'antd';
-import { ArrowLeftOutlined, InboxOutlined, DeleteOutlined, EyeOutlined, ApartmentOutlined, ReloadOutlined } from '@ant-design/icons';
+import { Card, Button, Upload, Table, Tag, Space, Typography, message, Spin, Result, Popconfirm, Modal, Input } from 'antd';
+import { ArrowLeftOutlined, InboxOutlined, DeleteOutlined, EyeOutlined, ApartmentOutlined, ReloadOutlined, EditOutlined } from '@ant-design/icons';
 import type { Doc } from '../types';
 import type { UploadProps } from 'antd';
 import { validateFileType, uploadDocToKB } from '../utils/upload';
-import { getDocuments, deleteDocument as apiDeleteDoc } from '../api';
+import { getDocuments, deleteDocument as apiDeleteDoc, renameDocument, searchKb } from '../api';
+import type { FullTextSearchResult } from '../api';
 import { useKBStore } from '../stores/kbStore';
 import EmptyState from '../components/EmptyState';
 
@@ -138,6 +139,54 @@ function KBDetail() {
     [currentKbId],
   );
 
+  // ===== 全文搜索 =====
+  const [searchResults, setSearchResults] = useState<FullTextSearchResult[]>([]);
+
+  const handleSearch = async (q: string) => {
+    if (!currentKbId || !q.trim()) {
+      setSearchResults([]);
+      return;
+    }
+    try {
+      const results = await searchKb(currentKbId, q.trim());
+      setSearchResults(results);
+      if (results.length === 0) {
+        message.info('未找到匹配内容');
+      }
+    } catch {
+      message.error('搜索失败，请稍后重试');
+    }
+  };
+
+  // ===== 重命名 =====
+  const [renameTarget, setRenameTarget] = useState<Doc | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+
+  const openRename = (doc: Doc) => {
+    setRenameTarget(doc);
+    setRenameValue(doc.filename);
+  };
+
+  const handleRename = async () => {
+    if (!renameTarget || !currentKbId) return;
+    const newName = renameValue.trim();
+    if (!newName || newName === renameTarget.filename) {
+      setRenameTarget(null);
+      return;
+    }
+    try {
+      const updated = await renameDocument(currentKbId, renameTarget.doc_id, newName);
+      setDocs((prev) => prev.map((d) => (d.doc_id === updated.doc_id ? { ...d, filename: updated.filename } : d)));
+      // 同步 store 缓存
+      const { docs, setDocs: setStoreDocs } = useKBStore.getState();
+      setStoreDocs(docs.map((d) => (d.doc_id === updated.doc_id ? { ...d, filename: updated.filename } : d)), currentKbId);
+      message.success(`已重命名为「${newName}」`);
+    } catch {
+      message.error('重命名失败，请稍后重试');
+    }
+    setRenameTarget(null);
+  };
+
   // ===== 表格列 =====
   const columns = [
     {
@@ -200,6 +249,9 @@ function KBDetail() {
           >
             阅读
           </Button>
+          <Button type="link" icon={<EditOutlined />} onClick={() => openRename(record)}>
+            重命名
+          </Button>
           <Popconfirm
             title={`确认删除「${record.filename}」？`}
             description="删除后文档及向量数据将不可恢复"
@@ -236,6 +288,47 @@ function KBDetail() {
         </Button>
         <Text type="secondary">共 {docs.length} 篇文档</Text>
       </div>
+
+      {/* 全文搜索 */}
+      <Input.Search
+        placeholder="搜索文档内容（全文检索）"
+        allowClear
+        enterButton="搜索"
+        onSearch={handleSearch}
+        style={{ marginTop: 12, maxWidth: 420 }}
+      />
+
+      {/* 搜索结果 */}
+      {searchResults.length > 0 && (
+        <Card size="small" style={{ marginTop: 12 }} title={`搜索结果 (${searchResults.length})`}>
+          {searchResults.map((r, i) => (
+            <div
+              key={i}
+              style={{
+                padding: '8px 0',
+                borderBottom: i < searchResults.length - 1 ? '1px solid var(--color-border)' : 'none',
+                cursor: 'pointer',
+              }}
+              onClick={() => {
+                if (!currentKbId) return;
+                // 从文档列表匹配完整 Doc 对象（用于标题显示文件名）
+                const matched = docs.find((d) => d.doc_id === r.doc_id);
+                navigate(`/wendang/${currentKbId}/${r.doc_id}`, {
+                  state: { page: r.page_num, docMeta: matched },
+                });
+              }}
+            >
+              <Space>
+                <Text strong>{r.doc_name}</Text>
+                <Tag>第 {r.page_num} 页</Tag>
+              </Space>
+              <div style={{ color: 'var(--color-text-secondary)', fontSize: 13, marginTop: 2 }}>
+                {r.snippet}
+              </div>
+            </div>
+          ))}
+        </Card>
+      )}
 
       {/* 文档上传区域 */}
       <Card style={{ marginTop: 16, flexShrink: 0 }}>
@@ -288,6 +381,25 @@ function KBDetail() {
           />
         )}
       </Card>
+
+      {/* 重命名 Modal */}
+      <Modal
+        title="重命名文档"
+        open={!!renameTarget}
+        onOk={handleRename}
+        onCancel={() => setRenameTarget(null)}
+        okText="保存"
+        cancelText="取消"
+      >
+        <Input
+          value={renameValue}
+          onChange={(e) => setRenameValue(e.target.value)}
+          placeholder="输入新文件名"
+          maxLength={255}
+          onPressEnter={handleRename}
+          style={{ marginTop: 16 }}
+        />
+      </Modal>
     </div>
   );
 }

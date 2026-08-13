@@ -27,7 +27,9 @@ function App() {
       <div
         style={{
           padding: 24,
-          minHeight: '100vh',
+          height: '100vh',
+          overflow: 'hidden',
+          boxSizing: 'border-box',
           background: backgroundImage
             ? `var(--color-bg) url(${backgroundImage}) center / cover no-repeat fixed`
             : 'var(--color-bg)',

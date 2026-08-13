@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { persist, createJSONStorage } from 'zustand/middleware';
 import type { KB, Doc } from '../types';
 
 interface KBState {
@@ -24,33 +25,44 @@ interface KBState {
 }
 
 /** 知识库列表 & 当前选中状态 */
-export const useKBStore = create<KBState>((set, get) => ({
-  kbs: [],
-  loading: false,
-  currentKbId: null,
-  docs: [],
-  docsKbId: null,
+export const useKBStore = create<KBState>()(
+  persist(
+    (set, get) => ({
+      kbs: [],
+      loading: false,
+      currentKbId: null,
+      docs: [],
+      docsKbId: null,
 
-  setKBs: (kbs) => set({ kbs }),
+      setKBs: (kbs) => set({ kbs }),
 
-  addKB: (kb) => set((state) => ({ kbs: [...state.kbs, kb] })),
+      addKB: (kb) => set((state) => ({ kbs: [...state.kbs, kb] })),
 
-  removeKB: (id) => set((state) => ({ kbs: state.kbs.filter((kb) => kb.id !== id) })),
+      removeKB: (id) => set((state) => ({ kbs: state.kbs.filter((kb) => kb.id !== id) })),
 
-  setCurrentKbId: (id) => set({ currentKbId: id }),
+      setCurrentKbId: (id) => set({ currentKbId: id }),
 
-  setDocs: (docs, kbId) => set({ docs, docsKbId: kbId }),
+      setDocs: (docs, kbId) => set({ docs, docsKbId: kbId }),
 
-  fetchDocsIfNeeded: async (kbId) => {
-    const { docs, docsKbId } = get();
-    // 缓存命中（同一知识库）直接返回
-    if (docsKbId === kbId && docs.length > 0) {
-      return docs;
-    }
-    // 未缓存 → 拉取并缓存
-    const { getDocuments } = await import('../api');
-    const list = await getDocuments(kbId);
-    set({ docs: list, docsKbId: kbId });
-    return list;
-  },
-}));
+      fetchDocsIfNeeded: async (kbId) => {
+        const { docs, docsKbId } = get();
+        // 缓存命中（同一知识库）直接返回
+        if (docsKbId === kbId && docs.length > 0) {
+          return docs;
+        }
+        // 未缓存 → 拉取并缓存
+        const { getDocuments } = await import('../api');
+        const list = await getDocuments(kbId);
+        set({ docs: list, docsKbId: kbId });
+        return list;
+      },
+    }),
+    {
+      name: 'pkr-kb-store',
+      storage: createJSONStorage(() => localStorage),
+      // 只持久化 currentKbId：刷新后恢复选中的知识库；
+      // kbs/docs 列表每次从 API 拉取，不持久化（避免陈旧数据）
+      partialize: (s) => ({ currentKbId: s.currentKbId }),
+    },
+  ),
+);

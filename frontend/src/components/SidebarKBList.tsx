@@ -14,6 +14,7 @@ interface Props {
 /** 侧边栏 — 知识库列表 */
 function SidebarKBList({ kbs, sidebarWidth }: Props) {
   const navigate = useNavigate();
+  const currentKbId = useKBStore((s) => s.currentKbId);
   const setCurrentKbId = useKBStore((s) => s.setCurrentKbId);
 
   return (
@@ -33,9 +34,18 @@ function SidebarKBList({ kbs, sidebarWidth }: Props) {
           const showTags = sidebarWidth > 300;
           const showCount = sidebarWidth > 250;
 
+          const isActive = kb.id === currentKbId;
           return (
             <List.Item
-              style={{ cursor: 'pointer' }}
+              style={{
+                cursor: 'pointer',
+                borderRadius: 8,
+                padding: '4px 8px',
+                marginBottom: 2,
+                background: isActive ? 'var(--color-primary-bg)' : 'transparent',
+                border: isActive ? '1px solid var(--color-primary)' : '1px solid transparent',
+                transition: 'background 0.2s, border-color 0.2s',
+              }}
               onClick={() => setCurrentKbId(kb.id)}
               actions={[
                 <Button
@@ -54,7 +64,7 @@ function SidebarKBList({ kbs, sidebarWidth }: Props) {
               ]}
             >
               <List.Item.Meta
-                title={kb.name}
+                title={<span style={{ fontWeight: isActive ? 600 : 400, color: isActive ? 'var(--color-primary)' : undefined }}>{kb.name}</span>}
                 description={
                   showDesc || showTags || showCount ? (
                     <Space size={4}>

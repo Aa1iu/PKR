@@ -1,4 +1,4 @@
-import { useRef, useEffect } from 'react';
+import { useRef, useEffect, useState } from 'react';
 import { Button, Input, Typography } from 'antd';
 import { SendOutlined, RobotOutlined, FileTextOutlined } from '@ant-design/icons';
 import { useChatStore } from '../stores/chatStore';
@@ -36,6 +36,17 @@ function ChatPanel({ kbId }: { kbId?: string | null }) {
 
   const msgListRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  // 用户消息 ref（定位条跳转用）
+  const userMsgRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const [activeIdx, setActiveIdx] = useState(-1);
+  const [hoverIdx, setHoverIdx] = useState<number | null>(null);
+  // 闪烁中的提问索引（点击定位后闪烁提示）
+  const [flashIdx, setFlashIdx] = useState<number | null>(null);
+  // tooltip 视口坐标（fixed 定位，避免被滚动容器截断）
+  const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null);
+
+  // 用户提问列表（定位条数据源）
+  const userQuestions = messages.filter((m) => m.role === 'user');
 
   // 新消息到达时自动滚到底部
   useEffect(() => {
@@ -43,6 +54,31 @@ function ChatPanel({ kbId }: { kbId?: string | null }) {
       msgListRef.current.scrollTop = msgListRef.current.scrollHeight;
     }
   }, [messages]);
+
+  /** 滚动监听：计算当前可见的提问索引 */
+  const handleScroll = () => {
+    const container = msgListRef.current;
+    if (!container) return;
+    const containerTop = container.getBoundingClientRect().top;
+    let current = -1;
+    userMsgRefs.current.forEach((el, i) => {
+      if (el && el.getBoundingClientRect().top <= containerTop + 100) {
+        current = i;
+      }
+    });
+    setActiveIdx(current);
+  };
+
+  /** 点击定位点 → 平滑滚动到对应提问 + 闪烁提示 */
+  const scrollToQuestion = (idx: number) => {
+    const el = userMsgRefs.current[idx];
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+    // 闪烁当前提问词条（1.5s 后清除）
+    setFlashIdx(idx);
+    setTimeout(() => setFlashIdx(null), 1500);
+  };
 
   /** 发送消息 */
   const handleSend = () => {
@@ -66,12 +102,17 @@ function ChatPanel({ kbId }: { kbId?: string | null }) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
-      {/* ===== 消息列表区 ===== */}
+      {/* ===== 消息区外层 wrapper（定位条锚点，不滚动 → 定位条固定） ===== */}
+      <div style={{ flex: 1, position: 'relative', minHeight: 0, display: 'flex' }}>
+      {/* ===== 消息列表区（独立滚动容器） ===== */}
       <div
         ref={msgListRef}
+        onScroll={handleScroll}
         style={{
           flex: 1,
           overflowY: 'auto',
+          overflowX: 'hidden',
+          overscrollBehavior: 'contain',
           padding: '24px 16px',
         }}
       >
@@ -138,16 +179,22 @@ function ChatPanel({ kbId }: { kbId?: string | null }) {
           )}
 
           {/* ===== 消息列表（DeepSeek 风格） ===== */}
-          {messages.map((msg) => {
+          {messages.map((msg, msgIdx) => {
             const isUser = msg.role === 'user';
+            // 用户消息在提问列表中的索引（定位条用）
+            const qIdx = isUser
+              ? messages.slice(0, msgIdx).filter((m) => m.role === 'user').length
+              : -1;
             return (
               <div
                 key={msg.id}
+                ref={isUser ? (el) => { userMsgRefs.current[qIdx] = el; } : undefined}
                 style={{
                   display: 'flex',
                   marginBottom: 28,
                   gap: 12,
                   justifyContent: isUser ? 'flex-end' : 'flex-start',
+                  scrollMarginTop: 20,
                 }}
               >
                 {/* AI 图标（仅 AI 消息显示） */}
@@ -188,6 +235,8 @@ function ChatPanel({ kbId }: { kbId?: string | null }) {
                         lineHeight: 1.7,
                         wordBreak: 'break-word',
                         whiteSpace: 'pre-wrap',
+                        // 点击定位后闪烁提示
+                        animation: flashIdx === qIdx ? 'pkr-flash 1.5s ease-out' : undefined,
                       }}
                     >
                       {msg.content}
@@ -198,6 +247,36 @@ function ChatPanel({ kbId }: { kbId?: string | null }) {
                         <MarkdownRenderer content={msg.content} />
                       </div>
                       <SourceCitation sources={msg.sources} />
+                      {/* 推荐追问 */}
+                      {msg.follow_up_questions && msg.follow_up_questions.length > 0 && (
+                        <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                          {msg.follow_up_questions.map((q, qi) => (
+                            <div
+                              key={qi}
+                              onClick={() => {
+                                setInputValue(q);
+                                setTimeout(() => handleSend(), 50);
+                              }}
+                              style={{
+                                alignSelf: 'flex-start',
+                                padding: '6px 14px',
+                                borderRadius: 16,
+                                border: '1px solid var(--color-border)',
+                                background: 'var(--color-surface)',
+                                color: 'var(--color-text)',
+                                fontSize: 13,
+                                cursor: 'pointer',
+                                transition: 'border-color 0.2s',
+                                maxWidth: '100%',
+                              }}
+                              onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.borderColor = 'var(--color-primary)'; }}
+                              onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.borderColor = 'var(--color-border)'; }}
+                            >
+                              {q}
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -270,6 +349,88 @@ function ChatPanel({ kbId }: { kbId?: string | null }) {
             </div>
           )}
         </div>
+
+      </div>
+
+      {/* ===== 右侧快速定位条（≥2 轮提问时显示；位于 wrapper 层，不随滚动移动） ===== */}
+      {userQuestions.length >= 2 && (
+        <div
+          style={{
+            position: 'absolute',
+            right: 28, // 避开滚动条（滚动条约 10px + 间距）
+            top: '50%',
+            transform: 'translateY(-50%)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 10,
+            padding: '8px 0',
+            zIndex: 10,
+          }}
+        >
+          {userQuestions.map((q, i) => {
+            const isActive = i === activeIdx;
+            const isHover = hoverIdx === i;
+            return (
+              <div
+                key={q.id}
+                style={{ position: 'relative', display: 'flex', alignItems: 'center' }}
+                onMouseEnter={(e) => {
+                  setHoverIdx(i);
+                  // 记录圆点左边缘视口坐标（tooltip 在左侧弹出）
+                  const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
+                  setTooltipPos({ x: rect.left - 10, y: rect.top + rect.height / 2 });
+                }}
+                onMouseLeave={() => {
+                  setHoverIdx(null);
+                  setTooltipPos(null);
+                }}
+              >
+                {/* 圆点 */}
+                <div
+                  onClick={() => scrollToQuestion(i)}
+                  style={{
+                    width: isActive ? 10 : 7,
+                    height: isActive ? 10 : 7,
+                    borderRadius: '50%',
+                    background: isActive ? 'var(--color-primary)' : 'var(--color-border)',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s',
+                    alignSelf: 'center',
+                  }}
+                />
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ===== tooltip（fixed 视口定位，显示问题全文，不被容器截断） ===== */}
+      {tooltipPos && hoverIdx !== null && userQuestions[hoverIdx] && (
+        <div
+          style={{
+            position: 'fixed',
+            left: tooltipPos.x,
+            top: tooltipPos.y,
+            // 向左展开：右边缘贴圆点左边缘
+            transform: 'translate(-100%, -50%)',
+            background: 'var(--color-surface)',
+            border: '1px solid var(--color-border)',
+            borderRadius: 8,
+            padding: '6px 10px',
+            fontSize: 12,
+            color: 'var(--color-text)',
+            whiteSpace: 'nowrap',
+            maxWidth: 300,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            boxShadow: '0 2px 8px rgba(0,0,0,0.12)',
+            zIndex: 1000,
+            pointerEvents: 'none',
+          }}
+        >
+          {userQuestions[hoverIdx].content}
+        </div>
+      )}
       </div>
 
       {/* ===== 底部输入区（DeepSeek 风格） ===== */}
@@ -346,6 +507,12 @@ function ChatPanel({ kbId }: { kbId?: string | null }) {
         @keyframes pkr-blink {
           0%, 80%, 100% { opacity: 0.2; }
           40% { opacity: 1; }
+        }
+        @keyframes pkr-flash {
+          0% { box-shadow: 0 0 0 0 rgba(64, 150, 255, 0.7); background: var(--color-primary); }
+          30% { box-shadow: 0 0 0 8px rgba(64, 150, 255, 0); background: var(--color-primary); }
+          60% { box-shadow: 0 0 0 6px rgba(64, 150, 255, 0.4); background: var(--color-primary); }
+          100% { box-shadow: 0 0 0 0 rgba(64, 150, 255, 0); background: var(--color-primary); }
         }
       `}</style>
     </div>

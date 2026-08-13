@@ -1,7 +1,7 @@
 import { useEffect, useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Card, Button, Select, Typography, Spin, Empty, Result } from 'antd';
-import { ArrowLeftOutlined, ReloadOutlined } from '@ant-design/icons';
+import { Card, Button, Select, Typography, Spin, Empty, Result, message } from 'antd';
+import { ArrowLeftOutlined, ReloadOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import type { KB, Doc } from '../types';
 import { getKBs } from '../api';
 import KnowledgeGraph from '../components/KnowledgeGraph';
@@ -94,6 +94,39 @@ function GraphPage() {
     setCurrentKbId(kbId);
   };
 
+  // ===== 手动触发图谱分析 =====
+  const [analyzing, setAnalyzing] = useState(false);
+
+  const handleAnalyze = async () => {
+    if (!currentKbId || analyzing) return;
+    setAnalyzing(true);
+    try {
+      const { triggerAnalyze, getAnalyzeStatus } = await import('../api');
+      await triggerAnalyze(currentKbId);
+      message.info('图谱分析已启动，请稍候...');
+
+      // 轮询状态（最多 60 秒）
+      const deadline = Date.now() + 60000;
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 5000));
+        const status = await getAnalyzeStatus(currentKbId);
+        if (status.status === 'completed') {
+          message.success('图谱分析完成');
+          fetchGraph(currentKbId);
+          break;
+        }
+        if (status.status === 'failed') {
+          message.error(`分析失败: ${status.error || '未知错误'}`);
+          break;
+        }
+      }
+    } catch {
+      message.error('触发分析失败，请确认后端已启动');
+    } finally {
+      setAnalyzing(false);
+    }
+  };
+
   return (
     <div style={{ height: 'calc(100vh - 48px)', display: 'flex', flexDirection: 'column' }}>
       {/* 顶部导航栏 */}
@@ -124,7 +157,16 @@ function GraphPage() {
           }
         />
 
-        <Text type="secondary" style={{ marginLeft: 'auto' }}>
+        <Button
+          type="primary"
+          icon={<ThunderboltOutlined />}
+          onClick={handleAnalyze}
+          loading={analyzing}
+          style={{ marginLeft: 'auto' }}
+        >
+          重新分析
+        </Button>
+        <Text type="secondary">
           共 {nodes.length} 个节点 · {edges.length} 条关系
         </Text>
       </div>
