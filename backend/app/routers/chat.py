@@ -120,6 +120,13 @@ async def chat(body: ChatRequest, db: Session = Depends(get_db)):
             ).first()
             if doc:
                 doc_name = doc.filename
+    elif body.context_type == "global":
+        # 全局导航：注入所有知识库信息，供 AI 推荐学习路径（需求 3.3）
+        all_kbs = db.query(KnowledgeBase).all()
+        if all_kbs:
+            kb_name = "；".join(
+                f"{k.name}（{k.description or '无描述'}）" for k in all_kbs[:10]
+            )
 
     # —— RAG 检索 ——
     rag_service = get_rag_service()

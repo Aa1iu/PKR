@@ -9,6 +9,9 @@ from openai import AsyncOpenAI
 from ..core.config import settings
 
 # Prompt 模板
+# 通用澄清指令（需求 3.4：模糊问题引导收束）
+CLARIFY_RULE = "如果用户问题模糊或存在多种理解，先简述你的理解再回答；信息不足时礼貌追问 1 个关键细节。"
+
 PROMPT_KB = """你是知识库「{kb_name}」的智能助手。请基于以下参考资料回答用户问题。
 如果参考资料不足以回答，请如实告知并建议补充相关文档。
 
@@ -16,9 +19,10 @@ PROMPT_KB = """你是知识库「{kb_name}」的智能助手。请基于以下�
 {context}
 
 回答要求：
-1. 优先基于参考资料，不要编造内容
-2. 引用来源时使用格式：[来源: 《文档名》P页码]
-3. 回答简洁准确，控制篇幅"""
+1. {clarify}
+2. 优先基于参考资料，不要编造内容
+3. 引用来源时使用格式：[来源: 《文档名》P页码]
+4. 回答简洁准确，控制篇幅"""
 
 PROMPT_DOC = """你是文档导师。用户正在阅读《{doc_name}》，当前在第 {page} 页附近。
 请基于文档内容回答用户问题，帮助用户理解文档中的概念。
@@ -27,18 +31,20 @@ PROMPT_DOC = """你是文档导师。用户正在阅读《{doc_name}》，当前
 {context}
 
 回答要求：
-1. 优先基于当前文档内容
-2. 引用时注明具体页码：[来源: 第X页]
-3. 如果文档未覆盖问题，建议用户查看知识库其他文档
-4. 回答简洁易懂"""
+1. {clarify}
+2. 优先基于当前文档内容
+3. 引用时注明具体页码：[来源: 第X页]
+4. 如果文档未覆盖问题，建议用户查看知识库其他文档
+5. 回答简洁易懂"""
 
 PROMPT_GLOBAL = """你是学习导航助手。根据用户已有知识库，帮助解答一般性知识问题。
 {context}
 
 回答要求：
-1. 综合你的知识给出准确回答
-2. 建议用户可深入了解的知识库方向
-3. 回答简洁友好"""
+1. {clarify}
+2. 综合你的知识给出准确回答
+3. 建议用户可深入了解的知识库方向
+4. 回答简洁友好"""
 
 
 class LLMService:
@@ -102,16 +108,18 @@ class LLMService:
             system_prompt = PROMPT_KB.format(
                 kb_name=kb_name,
                 context=context_text or "（暂无相关资料，请基于你的知识回答）",
+                clarify=CLARIFY_RULE,
             )
         elif scenario == "doc":
             system_prompt = PROMPT_DOC.format(
                 doc_name=doc_name,
                 page=doc_page or "?",
                 context=context_text or "（文档内容加载中...）",
+                clarify=CLARIFY_RULE,
             )
         else:  # global
             kb_hint = f"用户有以下知识库：{kb_name}" if kb_name else ""
-            system_prompt = PROMPT_GLOBAL.format(context=kb_hint)
+            system_prompt = PROMPT_GLOBAL.format(context=kb_hint, clarify=CLARIFY_RULE)
 
         # 3. 组装消息
         messages = [{"role": "system", "content": system_prompt}]

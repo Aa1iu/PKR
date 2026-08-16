@@ -5,11 +5,11 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
   plugins: [react()],
 
-  // Phase 2: 代理 /api 到后端 FastAPI（localhost:8000）
+  // 代理 /api 到后端 FastAPI（8001 当前被带 API Key 的服务器占用）
   server: {
     proxy: {
       '/api': {
-        target: 'http://localhost:8000',
+        target: 'http://localhost:8001',
         changeOrigin: true,
       },
     },

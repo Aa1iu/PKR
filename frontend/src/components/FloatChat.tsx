@@ -2,9 +2,8 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { Button, Input, Typography } from 'antd';
 import { MessageOutlined, CloseOutlined, MinusOutlined, SendOutlined } from '@ant-design/icons';
-import { useChatStore } from '../stores/chatStore';
 import { useKBStore } from '../stores/kbStore';
-import { useChatStream } from '../hooks/useChatStream';
+import { useLocalChatStream } from '../hooks/useLocalChatStream';
 import MarkdownRenderer from './MarkdownRenderer';
 import SourceCitation from './SourceCitation';
 
@@ -28,14 +27,10 @@ function FloatChat() {
   const [open, setOpen] = useState(false);
   const [minimized, setMinimized] = useState(false);
 
-  // 与 ChatPanel 共享同一份对话状态
-  const messages = useChatStore((s) => s.messages);
-  const inputValue = useChatStore((s) => s.inputValue);
-  const sending = useChatStore((s) => s.sending);
-  const setInputValue = useChatStore((s) => s.setInputValue);
-  // 当前知识库上下文：有则基于 KB 回答，无则全局对话
+  // 独立对话状态（不与主面板共享，避免互相干扰）
   const currentKbId = useKBStore((s) => s.currentKbId);
-  const handleStream = useChatStream(currentKbId);
+  const { messages, sending, send } = useLocalChatStream(currentKbId);
+  const [inputValue, setInputValue] = useState('');
 
   // ---- 窗口位置 ----
   const [pos, setPos] = useState(() => ({
@@ -75,12 +70,12 @@ function FloatChat() {
     [pos],
   );
 
-  // ---- 发送消息（与 ChatPanel 共享 store，通过 useChatStream hook） ----
+  // ---- 发送消息（本地独立对话） ----
   const handleSend = () => {
     const text = inputValue.trim();
     if (!text || sending) return;
     setInputValue('');
-    handleStream(text);
+    send(text);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {

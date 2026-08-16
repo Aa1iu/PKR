@@ -11,6 +11,8 @@
 """
 
 import os
+import subprocess
+import threading
 import uuid
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile, File, Query
@@ -23,7 +25,7 @@ from ..models import KnowledgeBase, Document, DocumentPage
 from ..schemas import (
     DocResponse, DocListResponse, DocDetailResponse,
     DocRenameRequest, DocContentResponse, DocPageResponse,
-    PageImageResponse, SuccessResponse,
+    PageImageResponse, SuccessResponse, ConceptDocRefItem,
 )
 from ..services.chroma_service import get_chroma_service
 from ..services.document_parser import parse_document, parse_document_pages, chunk_text
@@ -120,6 +122,75 @@ def _process_document_background(doc_id: str, kb_id: str, file_path: str, filena
         db.close()
 
 
+# ===== PPT 转图片（LibreOffice → PDF → PNG 缓存） =====
+
+# LibreOffice 安装路径（个人项目硬编码，环境变化时修改此处）
+SOFFICE_PATH = "C:/Program Files/LibreOffice/program/soffice.exe"
+PPT_CACHE_DIR = os.path.join(os.path.dirname(settings.UPLOAD_DIR), "ppt_cache")
+_ppt_lock = threading.Lock()  # 并发首转保护
+
+
+def _ensure_ppt_images(doc: Document) -> str | None:
+    """将 PPTX 转为 PNG 缓存目录，返回缓存目录路径；失败返回 None"""
+    cache_dir = os.path.join(PPT_CACHE_DIR, doc.id)
+    if os.path.exists(os.path.join(cache_dir, "page_1.png")):
+        return cache_dir  # 已转换（缓存命中）
+
+    with _ppt_lock:
+        # 双检：等锁后可能已被其他请求转换
+        if os.path.exists(os.path.join(cache_dir, "page_1.png")):
+            return cache_dir
+
+        os.makedirs(cache_dir, exist_ok=True)
+        try:
+            # 1. LibreOffice: pptx → pdf（一次转换全部页，比逐页转 PNG 可靠）
+            if not os.path.exists(SOFFICE_PATH):
+                return None
+            subprocess.run(
+                [SOFFICE_PATH, "--headless", "--convert-to", "pdf",
+                 "--outdir", cache_dir, doc.file_path],
+                timeout=180, capture_output=True, check=True,
+            )
+            # 2. PyMuPDF: pdf → 每页 PNG
+            pdf_name = os.path.splitext(os.path.basename(doc.file_path))[0] + ".pdf"
+            pdf_path = os.path.join(cache_dir, pdf_name)
+            if not os.path.exists(pdf_path):
+                return None
+
+            import fitz
+            pdf = fitz.open(pdf_path)
+            for i, page in enumerate(pdf, 1):
+                pix = page.get_pixmap(dpi=120)  # 120 DPI：清晰度与体积平衡
+                pix.save(os.path.join(cache_dir, f"page_{i}.png"))
+            pdf.close()
+            return cache_dir
+        except Exception:
+            return None
+
+
+def reindex_kb_documents(kb_id: str) -> int:
+    """重建 KB 所有文档的向量索引，返回处理文档数
+
+    清空该 KB 的 ChromaDB collection → 对每个 ready 文档重新
+    执行解析→分块→Embedding→入库。
+    """
+    db = SessionLocal()
+    docs = (
+        db.query(Document)
+        .filter(Document.kb_id == kb_id, Document.status == "ready")
+        .all()
+    )
+    db.close()
+
+    chroma_service = get_chroma_service()
+    chroma_service.delete_by_kb_id(kb_id)  # 清空旧向量
+
+    for d in docs:
+        if os.path.exists(d.file_path):
+            _process_document_background(d.id, kb_id, d.file_path, d.filename)
+    return len(docs)
+
+
 def _doc_to_response(doc: Document) -> DocResponse:
     return DocResponse(
         doc_id=doc.id,
@@ -132,7 +203,39 @@ def _doc_to_response(doc: Document) -> DocResponse:
     )
 
 
-def _doc_to_detail(doc: Document) -> DocDetailResponse:
+def _doc_to_detail(doc: Document, db: Session | None = None) -> DocDetailResponse:
+    """文档详情：填充 concept_refs（关联概念）和 chunk_count（向量块数）"""
+    chunk_count = 0
+    concept_refs = []
+
+    # chunk_count：从 ChromaDB 按 doc_id 过滤计数
+    try:
+        chroma_service = get_chroma_service()
+        collection = chroma_service.get_collection(doc.kb_id)
+        results = collection.get(where={"doc_id": doc.id}, include=[])
+        chunk_count = len(results["ids"])
+    except Exception:
+        pass  # ChromaDB 不可用时降级为 0
+
+    # concept_refs：关联概念位置
+    if db:
+        from ..models import Concept, ConceptDocRef
+        refs = (
+            db.query(ConceptDocRef, Concept.name)
+            .join(Concept, ConceptDocRef.concept_id == Concept.id)
+            .filter(ConceptDocRef.doc_id == doc.id)
+            .all()
+        )
+        concept_refs = [
+            ConceptDocRefItem(
+                doc_id=doc.id,
+                doc_name=doc.filename,
+                page_num=r.page_num,
+                paragraph=r.paragraph,
+            )
+            for r, _name in refs
+        ]
+
     return DocDetailResponse(
         doc_id=doc.id,
         filename=doc.filename,
@@ -141,8 +244,8 @@ def _doc_to_detail(doc: Document) -> DocDetailResponse:
         size=doc.file_size,
         status=doc.status,
         created_at=doc.created_at,
-        concept_refs=[],   # Phase 3
-        chunk_count=0,     # Phase 1
+        concept_refs=concept_refs,
+        chunk_count=chunk_count,
     )
 
 
@@ -226,7 +329,7 @@ def get_doc_detail(kb_id: str, doc_id: str, db: Session = Depends(get_db)):
     doc = db.query(Document).filter(Document.id == doc_id, Document.kb_id == kb_id).first()
     if not doc:
         raise HTTPException(status_code=404, detail="文档不存在")
-    return _doc_to_detail(doc)
+    return _doc_to_detail(doc, db)
 
 
 # ===== 重命名 =====
@@ -240,7 +343,7 @@ def rename_doc(kb_id: str, doc_id: str, body: DocRenameRequest, db: Session = De
     doc.filename = body.filename
     db.commit()
     db.refresh(doc)
-    return _doc_to_detail(doc)
+    return _doc_to_detail(doc, db)
 
 
 # ===== 删除 =====
@@ -319,12 +422,12 @@ def delete_doc(kb_id: str, doc_id: str, db: Session = Depends(get_db)):
 def get_doc_content(
     kb_id: str,
     doc_id: str,
-    page: int = Query(default=0, ge=0, description="0=全部页，>0=单页"),
+    page: int | None = Query(default=None, ge=1, description="不传=全部页，>0=单页"),
     db: Session = Depends(get_db),
 ):
     """获取文档内容（分页）
 
-    page=0（默认）：返回全部页（兼容前端现有调用）
+    不传 page（默认）：返回全部页
     page>0：返回指定单页
     """
     doc = db.query(Document).filter(Document.id == doc_id, Document.kb_id == kb_id).first()
@@ -337,7 +440,7 @@ def get_doc_content(
         .order_by(DocumentPage.page_num)
     )
 
-    if page > 0:
+    if page is not None:
         # 单页模式：返回该页（若页码超出范围返回空 pages）
         pages = query.filter(DocumentPage.page_num == page).all()
     else:
@@ -402,14 +505,27 @@ def get_page_image(
     page: int = Query(default=1, ge=1),
     db: Session = Depends(get_db),
 ):
-    """获取文档页图片 — 降级实现：返回源文件流（PPTX 可被浏览器/前端预览）
+    """获取文档页图片
 
-    完整实现需要 LibreOffice 逐页转 PNG（Phase 5 待做），
-    当前返回源文件，前端 PPTX 画廊可改用下载/原生查看。
+    PPTX：LibreOffice 转 PDF → PyMuPDF 渲染 PNG（首次转换缓存，之后秒开）
+    其他类型：降级返回源文件流
     """
     doc = db.query(Document).filter(Document.id == doc_id, Document.kb_id == kb_id).first()
     if not doc:
         raise HTTPException(status_code=404, detail="文档不存在")
     if not os.path.exists(doc.file_path):
         raise HTTPException(status_code=404, detail="文件不存在于服务器")
-    return FileResponse(doc.file_path, media_type="application/octet-stream")
+
+    # 非 PPTX：保持原降级（返回源文件）
+    if doc.file_type != "pptx":
+        return FileResponse(doc.file_path, media_type="application/octet-stream")
+
+    # PPTX：LibreOffice 转换 PNG（缓存）
+    cache_dir = _ensure_ppt_images(doc)
+    if not cache_dir:
+        raise HTTPException(status_code=500, detail="PPT 转换失败，请确认 LibreOffice 已安装")
+
+    img_path = os.path.join(cache_dir, f"page_{page}.png")
+    if not os.path.exists(img_path):
+        raise HTTPException(status_code=404, detail="页码超出范围")
+    return FileResponse(img_path, media_type="image/png")

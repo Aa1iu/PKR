@@ -40,6 +40,7 @@ function renderByType(
     case 'docx':
       return <DocxHtmlRenderer kbId={kbId} docId={docId} />;
     case 'pptx':
+      // 图片画廊：LibreOffice 转 PNG（page-image 端点），完整还原幻灯片
       return (
         <PptxGalleryRenderer
           kbId={kbId}
@@ -76,11 +77,10 @@ function DocReader() {
   // URL 参数优先（刷新可恢复），无则回退 store
   const kbId = kbIdParam || storeKbId;
 
-  // 文档元信息：优先 state（导航传入），刷新后为空则仅显示 docId
+  // 文档元信息：优先 state（导航传入），刷新后从 API 补齐
   const [docMeta, setDocMeta] = useState<Doc | null>(
     (location.state as { docMeta?: Doc } | null)?.docMeta || null,
   );
-  void setDocMeta; // 保留 setter 占位（后续可接 getDocumentDetail API）
   const [content, setContent] = useState<DocContent | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -89,6 +89,23 @@ function DocReader() {
     statePage && statePage >= 1 ? statePage : 1,
   );
   const contentRef = useRef<HTMLDivElement>(null);
+
+  // 刷新后补齐文档元信息（文件名/类型，避免只显示 docId）
+  useEffect(() => {
+    if (docMeta || !kbId || !docId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { getDocumentDetail } = await import('../api');
+        const detail = await getDocumentDetail(kbId, docId);
+        if (!cancelled) setDocMeta(detail);
+      } catch {
+        // 失败静默：保留 docId 显示
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [kbId, docId]);
 
   // 加载文档内容
   useEffect(() => {
@@ -148,13 +165,30 @@ function DocReader() {
   const fullMarkdown = isMarkdown
     ? (content?.pages || []).map(p => p.text).join('\n\n')
     : '';
+  // txt 走文本分页；md 全文渲染；pptx 由画廊内部管理分页；pdf/docx 各自渲染器
   const showPagination = !isMarkdown && inferredType === 'txt' && totalPages > 1;
+
+  // ===== 临时调试 =====
+  console.log('[DocReader]', {
+    kbId, docId,
+    docMetaType: docMeta?.type,
+    inferredType,
+    totalPages,
+    showPagination,
+    loading,
+    error,
+    currentPage,
+    contentLoaded: !!content,
+    textLen: currentText?.length,
+  });
 
   // ===== 加载态 =====
   if (loading) {
     return (
       <div style={{ height: 'calc(100vh - 48px)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <Spin size="large" tip="加载文档中…" />
+        <Spin size="large">
+          <div style={{ marginTop: 12, color: 'var(--color-text-secondary)' }}>加载文档中…</div>
+        </Spin>
       </div>
     );
   }

@@ -11,7 +11,6 @@
 """
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 
 from ..core.database import get_db
@@ -218,11 +217,18 @@ def search_kb(
 
 # ===== Phase 2 =====
 
-@router.post("/{kb_id}/reindex")
+@router.post("/{kb_id}/reindex", response_model=ReindexResponse)
 def reindex_kb(kb_id: str, db: Session = Depends(get_db)):
-    """重建向量索引 — 未实现（Phase 5 待做）"""
+    """重建向量索引（后台线程执行，清空后重新入库）"""
     kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id).first()
     if not kb:
         raise HTTPException(status_code=404, detail="知识库不存在")
-    # 诚实返回 501，避免前端误以为重建完成
-    return PlainTextResponse("Not Implemented", status_code=501)
+
+    import threading
+    from .docs import reindex_kb_documents
+
+    threading.Thread(
+        target=reindex_kb_documents, args=(kb_id,), daemon=True
+    ).start()
+
+    return ReindexResponse(kb_id=kb_id, total_chunks=0, status="started")
