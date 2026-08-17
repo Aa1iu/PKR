@@ -11,6 +11,11 @@ export async function getDocuments(kbId: string): Promise<Doc[]> {
   return data.docs;
 }
 
+/** GET /api/kbs/{kb_id}/docs/{doc_id} — 获取文档详情 */
+export async function getDocumentDetail(kbId: string, docId: string): Promise<Doc> {
+  return request<Doc>(`/kbs/${kbId}/docs/${docId}`);
+}
+
 /** POST /api/kbs/{kb_id}/docs/upload — 上传文档（FormData） */
 export async function uploadDocument(
   kbId: string,
@@ -47,13 +52,16 @@ export interface DocContent {
   total_pages: number;
 }
 
-/** GET /api/kbs/{kb_id}/docs/{doc_id}/content?page=N — 获取文档分页内容 */
+/** GET /api/kbs/{kb_id}/docs/{doc_id}/content — 获取文档分页内容
+ * 不传 page → 返回全部页（阅读器默认）；传 page → 单页
+ */
 export async function getDocumentContent(
   kbId: string,
   docId: string,
-  page: number = 1,
+  page?: number,
 ): Promise<DocContent> {
-  return request<DocContent>(`/kbs/${kbId}/docs/${docId}/content?page=${page}`);
+  const suffix = page ? `?page=${page}` : '';
+  return request<DocContent>(`/kbs/${kbId}/docs/${docId}/content${suffix}`);
 }
 
 /** 获取原始文件流 URL（供 PDF iframe / DOCX mammoth 下载用） */
