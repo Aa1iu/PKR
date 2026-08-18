@@ -216,4 +216,14 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+<<<<<<< HEAD
 .npm-cache-tmp/
+=======
+
+# SQLite WAL 临时文件（运行时自动重建）
+*.db-shm
+*.db-wal
+
+# Docker 挂载的模型缓存目录
+.hf_cache/
+>>>>>>> bfe16bdb2d740e8c7b203f36d756ccc9e864211c
